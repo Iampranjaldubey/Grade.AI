@@ -1,0 +1,243 @@
+name: Deploy Production
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  RELEASE_TAG: ${{ github.ref_name }}
+  # Git SHA embedded in staging image tag at merge time; override via workflow input if needed.
+  SOURCE_IMAGE_TAG: staging-${{ github.sha }}
+
+jobs:
+  resolve-images:
+    name: Resolve staging images to promote
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve image tag from release metadata
+        id: resolve
+        env:
+          STAGING_SHA: ${{ vars.PRODUCTION_SOURCE_SHA }}
+        run: |
+          if [[ -n "$STAGING_SHA" ]]; then
+            echo "image_tag=staging-${STAGING_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_tag=staging-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+  promote-images:
+    name: Promote staging images (no rebuild)
+    runs-on: ubuntu-latest
+    needs: resolve-images
+    outputs:
+      backend_image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY_BACKEND }}:production-${{ env.RELEASE_TAG }}
+      frontend_image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY_FRONTEND }}:production-${{ env.RELEASE_TAG }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Promote backend image
+        env:
+          REPO: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          SOURCE_TAG: ${{ needs.resolve-images.outputs.image_tag }}
+          TARGET_TAG: production-${{ env.RELEASE_TAG }}
+        run: |
+          MANIFEST=$(aws ecr batch-get-image \
+            --repository-name "$REPO" \
+            --image-ids imageTag="$SOURCE_TAG" \
+            --query 'images[0].imageManifest' --output text)
+          aws ecr put-image \
+            --repository-name "$REPO" \
+            --image-tag "$TARGET_TAG" \
+            --image-manifest "$MANIFEST"
+          aws ecr put-image \
+            --repository-name "$REPO" \
+            --image-tag production-latest \
+            --image-manifest "$MANIFEST"
+
+      - name: Promote frontend image
+        env:
+          REPO: ${{ secrets.ECR_REPOSITORY_FRONTEND }}
+          SOURCE_TAG: ${{ needs.resolve-images.outputs.image_tag }}
+          TARGET_TAG: production-${{ env.RELEASE_TAG }}
+        run: |
+          MANIFEST=$(aws ecr batch-get-image \
+            --repository-name "$REPO" \
+            --image-ids imageTag="$SOURCE_TAG" \
+            --query 'images[0].imageManifest' --output text)
+          aws ecr put-image \
+            --repository-name "$REPO" \
+            --image-tag "$TARGET_TAG" \
+            --image-manifest "$MANIFEST"
+          aws ecr put-image \
+            --repository-name "$REPO" \
+            --image-tag production-latest \
+            --image-manifest "$MANIFEST"
+
+  deploy:
+    name: Blue/green deploy (production)
+    runs-on: ubuntu-latest
+    needs: [resolve-images, promote-images]
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (rollback capture)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Store previous backend task definition ARN
+        id: previous-task-def
+        run: |
+          ARN=$(aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER_PRODUCTION }}" \
+            --services "${{ secrets.ECS_SERVICE_BACKEND_PRODUCTION }}" \
+            --query 'services[0].taskDefinition' --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Render backend task definition
+        id: render-backend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/ecs/task-definition-backend-production.json
+          container-name: backend
+          image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY_BACKEND }}:production-${{ env.RELEASE_TAG }}
+
+      - name: Blue/green deploy backend (CodeDeploy)
+        id: deploy-backend
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-backend.outputs.task-definition }}
+          service: ${{ secrets.ECS_SERVICE_BACKEND_PRODUCTION }}
+          cluster: ${{ secrets.ECS_CLUSTER_PRODUCTION }}
+          codedeploy-appspec: deploy/ecs/appspec-backend-production.yml
+          codedeploy-application: ${{ secrets.CODEDEPLOY_APPLICATION_PRODUCTION }}
+          codedeploy-deployment-group: ${{ secrets.CODEDEPLOY_DEPLOYMENT_GROUP_BACKEND }}
+          wait-for-service-stability: true
+
+      - name: Render frontend task definition
+        id: render-frontend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/ecs/task-definition-frontend-production.json
+          container-name: frontend
+          image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY_FRONTEND }}:production-${{ env.RELEASE_TAG }}
+
+      - name: Blue/green deploy frontend (CodeDeploy)
+        id: deploy-frontend
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
+          service: ${{ secrets.ECS_SERVICE_FRONTEND_PRODUCTION }}
+          cluster: ${{ secrets.ECS_CLUSTER_PRODUCTION }}
+          codedeploy-appspec: deploy/ecs/appspec-frontend-production.yml
+          codedeploy-application: ${{ secrets.CODEDEPLOY_APPLICATION_PRODUCTION }}
+          codedeploy-deployment-group: ${{ secrets.CODEDEPLOY_DEPLOYMENT_GROUP_FRONTEND }}
+          wait-for-service-stability: true
+
+      - name: Production smoke test
+        id: smoke
+        env:
+          PRODUCTION_BASE_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          STATUS=$(curl -sS -o /tmp/health.json -w "%{http_code}" "${PRODUCTION_BASE_URL}/api/v1/health")
+          if [[ "$STATUS" != "200" ]]; then
+            echo "Production health check returned $STATUS"
+            exit 1
+          fi
+          cat /tmp/health.json
+
+      - name: Rollback on failure
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: |
+          echo "Rolling back to ${{ steps.previous-task-def.outputs.arn }}..."
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER_PRODUCTION }}" \
+            --service "${{ secrets.ECS_SERVICE_BACKEND_PRODUCTION }}" \
+            --task-definition "${{ steps.previous-task-def.outputs.arn }}" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER_PRODUCTION }}" \
+            --services "${{ secrets.ECS_SERVICE_BACKEND_PRODUCTION }}"
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: success()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [[ -n "$PREV" ]]; then
+            NOTES=$(git log "${PREV}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            NOTES=$(git log --pretty=format:"- %s (%h)" --no-merges | head -50)
+          fi
+          {
+            echo "notes<<EOF"
+            echo "## Changes"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: GradeAI ${{ env.RELEASE_TAG }}
+          body: ${{ steps.changelog.outputs.notes }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Slack notification
+    runs-on: ubuntu-latest
+    needs: [resolve-images, promote-images, deploy, release]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Slack
+        uses: ./.github/actions/slack-notify
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: ${{ needs.deploy.result == 'success' && 'success' || 'failure' }}
+          environment: production
+          message: |
+            Production release `${{ env.RELEASE_TAG }}`
+            Promoted from `${{ needs.resolve-images.outputs.image_tag }}`
+            Deploy: ${{ needs.deploy.result }}
+            Release: ${{ needs.release.result }}

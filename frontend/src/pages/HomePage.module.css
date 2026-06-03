@@ -1,0 +1,34 @@
+.hero {
+  text-align: center;
+  padding: 4rem 1rem;
+}
+
+.hero h1 {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  font-size: 1.125rem;
+  color: #475569;
+  max-width: 560px;
+  margin: 0 auto 2rem;
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 2rem;
+}
+
+.status {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.error {
+  color: #dc2626;
+}

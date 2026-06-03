@@ -1,0 +1,32 @@
+.dashboard h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.greeting {
+  color: #475569;
+  margin-bottom: 2rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1.5rem;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+}
+
+.card h2 {
+  font-size: 1.125rem;
+  margin-bottom: 0.5rem;
+}
+
+.card p {
+  color: #64748b;
+  font-size: 0.9375rem;
+}

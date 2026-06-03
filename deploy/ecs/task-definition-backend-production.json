@@ -1,0 +1,48 @@
+{
+  "family": "gradeai-backend-production",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gradeai-ecs-execution-production",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gradeai-ecs-task-production",
+  "containerDefinitions": [
+    {
+      "name": "backend",
+      "image": "ECR_REGISTRY/ECR_REPOSITORY_BACKEND:production-latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "APP_ENV", "value": "production" },
+        { "name": "DEBUG", "value": "false" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/production/DATABASE_URL" },
+        { "name": "REDIS_URL", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/production/REDIS_URL" },
+        { "name": "JWT_SECRET", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/production/JWT_SECRET" },
+        { "name": "OPENAI_API_KEY", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/production/OPENAI_API_KEY" },
+        { "name": "GEMINI_API_KEY", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/production/GEMINI_API_KEY" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/gradeai-backend-production",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

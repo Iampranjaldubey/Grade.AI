@@ -1,0 +1,92 @@
+# Minimal stack for CI Docker health verification (no bind mounts).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gradeai
+      POSTGRES_PASSWORD: gradeai
+      POSTGRES_DB: gradeai
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gradeai -d gradeai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    environment:
+      IS_PERSISTENT: "FALSE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  backend:
+    image: gradeai-backend:ci
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      DEBUG: "false"
+      DATABASE_URL: postgresql+asyncpg://gradeai:gradeai@postgres:5432/gradeai
+      DATABASE_URL_SYNC: postgresql://gradeai:gradeai@postgres:5432/gradeai
+      REDIS_URL: redis://redis:6379/0
+      CHROMADB_HOST: chromadb
+      CHROMADB_PORT: "8000"
+      JWT_SECRET: ci-docker-health-secret
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  migrate:
+    image: gradeai-backend:ci
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gradeai:gradeai@postgres:5432/gradeai
+      DATABASE_URL_SYNC: postgresql://gradeai:gradeai@postgres:5432/gradeai
+      JWT_SECRET: ci-docker-health-secret
+      APP_ENV: development
+    command: alembic upgrade head
+    restart: "no"
+
+  frontend:
+    image: gradeai-frontend:ci
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s

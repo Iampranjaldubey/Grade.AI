@@ -1,0 +1,62 @@
+name: Slack Notify
+description: Send a deployment notification to Slack
+
+inputs:
+  webhook-url:
+    description: Slack incoming webhook URL
+    required: true
+  status:
+    description: success or failure
+    required: true
+  environment:
+    description: Target environment name
+    required: true
+  message:
+    description: Additional message body
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Post to Slack
+      shell: bash
+      env:
+        WEBHOOK: ${{ inputs.webhook-url }}
+        STATUS: ${{ inputs.status }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        MESSAGE: ${{ inputs.message }}
+      run: |
+        if [[ -z "$WEBHOOK" ]]; then
+          echo "SLACK_WEBHOOK_URL not configured; skipping notification."
+          exit 0
+        fi
+        COLOR="#36a64f"
+        EMOJI=":white_check_mark:"
+        if [[ "$STATUS" != "success" ]]; then
+          COLOR="#dc3545"
+          EMOJI=":x:"
+        fi
+        PAYLOAD=$(jq -n \
+          --arg emoji "$EMOJI" \
+          --arg env "$ENVIRONMENT" \
+          --arg repo "${{ github.repository }}" \
+          --arg ref "${{ github.ref_name }}" \
+          --arg actor "${{ github.actor }}" \
+          --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          --arg msg "$MESSAGE" \
+          --arg color "$COLOR" \
+          '{
+            attachments: [{
+              color: $color,
+              title: ($emoji + " GradeAI " + $env + " deploy"),
+              fields: [
+                {title: "Repository", value: $repo, short: true},
+                {title: "Ref", value: $ref, short: true},
+                {title: "Actor", value: $actor, short: true},
+                {title: "Workflow", value: $run, short: false}
+              ],
+              text: $msg
+            }]
+          }')
+        curl -fsS -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$WEBHOOK"

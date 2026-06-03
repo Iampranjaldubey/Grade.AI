@@ -1,0 +1,28 @@
+{
+  "family": "gradeai-migrate-staging",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gradeai-ecs-execution-staging",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gradeai-ecs-task-staging",
+  "containerDefinitions": [
+    {
+      "name": "migrate",
+      "image": "ECR_REGISTRY/ECR_REPOSITORY_BACKEND:staging-latest",
+      "essential": true,
+      "command": ["alembic", "upgrade", "head"],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/staging/DATABASE_URL" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/gradeai-migrate-staging",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
