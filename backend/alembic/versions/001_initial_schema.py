@@ -34,13 +34,12 @@ def _timestamps() -> list[sa.Column]:
     ]
 
 
-UUID_PK = sa.Column(
-    postgresql.UUID(as_uuid=True),
-    primary_key=True,
-    server_default=sa.text("gen_random_uuid()"),
-    nullable=False,
-)
-
+# sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False), = sa.Column(
+#     postgresql.UUID(as_uuid=True),
+#     primary_key=True,
+#     server_default=sa.text("gen_random_uuid()"),
+#     nullable=False,
+# )
 TABLES_WITH_UPDATED_AT = (
     "users",
     "courses",
@@ -149,7 +148,7 @@ def upgrade() -> None:
 
     op.create_table(
         "users",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
@@ -163,7 +162,7 @@ def upgrade() -> None:
 
     op.create_table(
         "courses",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("course_name", sa.String(length=255), nullable=False),
         sa.Column("course_code", sa.String(length=64), nullable=False),
         sa.Column(
@@ -184,7 +183,7 @@ def upgrade() -> None:
 
     op.create_table(
         "enrollments",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "course_id",
             postgresql.UUID(as_uuid=True),
@@ -218,7 +217,7 @@ def upgrade() -> None:
 
     op.create_table(
         "assignments",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "course_id",
             postgresql.UUID(as_uuid=True),
@@ -238,7 +237,7 @@ def upgrade() -> None:
 
     op.create_table(
         "rubrics",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "assignment_id",
             postgresql.UUID(as_uuid=True),
@@ -256,7 +255,7 @@ def upgrade() -> None:
 
     op.create_table(
         "documents",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "course_id",
             postgresql.UUID(as_uuid=True),
@@ -297,7 +296,7 @@ def upgrade() -> None:
 
     op.create_table(
         "document_chunks",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "document_id",
             postgresql.UUID(as_uuid=True),
@@ -322,7 +321,7 @@ def upgrade() -> None:
 
     op.create_table(
         "submissions",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "assignment_id",
             postgresql.UUID(as_uuid=True),
@@ -359,7 +358,7 @@ def upgrade() -> None:
 
     op.create_table(
         "evaluations",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "submission_id",
             postgresql.UUID(as_uuid=True),
@@ -398,7 +397,7 @@ def upgrade() -> None:
 
     op.create_table(
         "audit_logs",
-        UUID_PK,
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column(
             "user_id",
             postgresql.UUID(as_uuid=True),

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "GradeAI"
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
     chromadb_host: str = Field(default="localhost", alias="CHROMADB_HOST")
-    chromadb_port: int = Field(default=8000, alias="CHROMADB_PORT")
+    chromadb_port: int = Field(default=8001, alias="CHROMADB_PORT")
 
     jwt_secret: str = Field(default="change-me", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")

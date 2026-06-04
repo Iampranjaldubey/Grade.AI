@@ -10,7 +10,7 @@ def test_cors_origins_parsed_from_string() -> None:
 
 
 def test_production_validation_rejects_default_jwt() -> None:
-    settings = Settings(app_env=AppEnvironment.PRODUCTION, jwt_secret="change-me")
+    settings = Settings(APP_ENV=AppEnvironment.PRODUCTION, JWT_SECRET="change-me")
     with pytest.raises(ValueError, match="JWT_SECRET"):
         settings.validate_required()
 

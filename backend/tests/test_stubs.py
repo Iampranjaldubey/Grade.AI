@@ -15,7 +15,7 @@ async def test_professor_courses_with_role(client: AsyncClient) -> None:
     register = await client.post(
         "/api/v1/auth/register",
         json={
-            "email": "prof@gradeai.test",
+            "email": "prof@gradeai.com",
             "password": "securepass123",
             "name": "Professor",
             "role": UserRole.PROFESSOR.value,
@@ -24,7 +24,7 @@ async def test_professor_courses_with_role(client: AsyncClient) -> None:
     assert register.status_code == 201
     login = await client.post(
         "/api/v1/auth/login",
-        json={"email": "prof@gradeai.test", "password": "securepass123"},
+        json={"email": "prof@gradeai.com", "password": "securepass123"},
     )
     token = login.json()["access_token"]
     response = await client.get(

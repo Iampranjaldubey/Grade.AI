@@ -10,7 +10,7 @@ class UUIDPrimaryKeyMixin:
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=text("gen_random_uuid()"),
+        default=uuid.uuid4,
     )
 
 
