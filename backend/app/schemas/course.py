@@ -27,6 +27,7 @@ class CourseOut(BaseModel):
     course_code: str
     professor_id: uuid.UUID
     semester: str
+    join_code: str | None = None    # ADD THIS LINE
     description: Optional[str]
     is_active: bool
     created_at: datetime

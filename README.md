@@ -1,204 +1,204 @@
-# GradeAI
+# GradeAI - Automated Grading Platform
 
-Production-grade monorepo for an AI-assisted grading platform. The stack includes a FastAPI backend, React frontend, PostgreSQL, Redis, ChromaDB vector store, Celery workers, and Nginx reverse proxy.
+An intelligent academic grading platform built with FastAPI, React, and AI-powered evaluation.
 
-## Repository structure
+## 🎯 Project Status
 
-```
-gradeai/
-├── backend/          # FastAPI application
-├── frontend/         # Vite + React + TypeScript
-├── docker/           # Docker build definitions
-├── nginx/            # Reverse proxy configuration
-├── scripts/          # Development and operations scripts
-├── docker-compose.yml
-├── Makefile
-└── .env.example
-```
+**Phase 1: Authentication** ✅ Complete
+- User registration and login
+- JWT-based authentication with refresh tokens
+- Role-based access control (Professor/Student/TA/Admin)
 
-## Prerequisites
+**Phase 2: Course Management** ✅ Complete
+- Course CRUD operations with join codes
+- Student enrollment system
+- Assignment and rubric management
+- Complete frontend foundation with auth flows
 
-- Docker 24+ and Docker Compose v2
-- Make (GNU Make on Linux/macOS; use Git Bash or WSL on Windows)
-- Node.js 22+ (local frontend development)
-- Python 3.12+ (local backend development)
-- Optional: `pre-commit` for git hooks
+**Phase 3: In Progress** 🚧
+- Detailed course and assignment pages
+- File upload and submission system
+- AI-powered grading
+- Analytics dashboard
 
-## Quick start (Docker)
+## 🚀 Quick Start
 
-1. Clone the repository and enter the project root:
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL 14+
+- Redis
 
-   ```bash
-   cd gradeai
-   ```
-
-2. Create your environment file:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Set required secrets in `.env`:
-
-   - `JWT_SECRET` — long random string for production
-   - `OPENAI_API_KEY` / `GEMINI_API_KEY` — AI provider keys
-   - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET` — file uploads
-
-4. Start the full development stack:
-
-   ```bash
-   make dev
-   ```
-
-5. Run database migrations and seed data:
-
-   ```bash
-   make migrate
-   make seed
-   ```
-
-### Service URLs
-
-| Service        | URL                          |
-|----------------|------------------------------|
-| Application    | http://localhost             |
-| API (direct)   | http://localhost:8000        |
-| API docs       | http://localhost/docs        |
-| Frontend       | http://localhost:3000        |
-| PostgreSQL     | localhost:5432               |
-| Redis          | localhost:6379               |
-| ChromaDB       | http://localhost:8001        |
-
-Default seeded admin (development only): `admin@gradeai.local` / `changeme123`
-
-## Makefile commands
-
-| Command              | Description                                      |
-|----------------------|--------------------------------------------------|
-| `make dev`           | Start infrastructure and application services    |
-| `make build`         | Build all Docker images                          |
-| `make test`          | Run backend pytest and frontend lint/typecheck   |
-| `make migrate`       | Apply Alembic migrations                         |
-| `make seed`          | Insert development seed data                     |
-| `make lint`          | Run Ruff, Black, and ESLint                      |
-| `make install-hooks` | Install pre-commit git hooks                     |
-| `make up` / `make down` | Start/stop compose stack in detached mode     |
-
-## Local development (without Docker)
-
-### Backend
-
+### Backend Setup
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp ../.env.example ../.env
 alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload
 ```
 
-Celery worker (separate terminal):
+Backend runs at `http://localhost:8000`
+API docs at `http://localhost:8000/docs`
 
-```bash
-celery -A app.celery_app.celery_app worker --loglevel=info
-```
-
-### Frontend
-
+### Frontend Setup
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8000`.
+Frontend runs at `http://localhost:5173`
 
-## Environment variables
+See [SETUP.md](SETUP.md) for detailed instructions.
 
-Copy `.env.example` to `.env`. Key variables:
+## 📚 Documentation
 
-| Variable           | Description                                |
-|--------------------|--------------------------------------------|
-| `DATABASE_URL`     | Async SQLAlchemy connection string         |
-| `REDIS_URL`        | Redis connection for caching               |
-| `CHROMADB_HOST`    | ChromaDB hostname (use `chromadb` in Docker)|
-| `OPENAI_API_KEY`   | OpenAI API key                             |
-| `GEMINI_API_KEY`   | Google Gemini API key                      |
-| `JWT_SECRET`       | Secret for signing access tokens           |
-| `AWS_S3_BUCKET`    | S3 bucket for uploaded submissions         |
-| `CELERY_BROKER_URL`| Celery message broker (Redis DB 1)         |
+- [SETUP.md](SETUP.md) - Complete setup instructions
+- [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - Detailed feature documentation
+- [phase2-courses.md](phase2-courses.md) - Phase 2 specifications
 
-## Pre-commit hooks
+## 🏗️ Architecture
 
-Install hooks once per machine:
+### Backend Stack
+- **Framework**: FastAPI (async Python web framework)
+- **Database**: PostgreSQL with SQLAlchemy ORM
+- **Cache**: Redis for token management
+- **Authentication**: JWT with refresh token rotation
+- **File Storage**: AWS S3
+- **Vector DB**: ChromaDB for RAG-based grading
+- **Task Queue**: Celery for async grading jobs
 
+### Frontend Stack
+- **Framework**: React 18 with TypeScript
+- **Build Tool**: Vite
+- **Routing**: React Router v6
+- **State Management**: Zustand
+- **Data Fetching**: TanStack Query (React Query)
+- **Forms**: React Hook Form + Zod validation
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Notifications**: React Hot Toast
+
+## 🎨 Design System
+
+**Colors**
+- Primary (Navy): `#1E3A5F`
+- Accent (Blue): `#2E86AB`
+- Backgrounds: White with gray-50 base
+
+**Typography**
+- Font Family: Inter
+- Clean, professional academic styling
+
+## 🔒 Security Features
+
+- JWT with access/refresh token rotation
+- Automatic token refresh on 401 responses
+- Token blacklisting on logout
+- Rate limiting on login attempts
+- Role-based route protection
+- Ownership verification on all write operations
+
+## 🎓 User Roles
+
+**Professor**
+- Create and manage courses
+- Create assignments with rubrics
+- View enrolled students
+- Grade submissions (manual/AI-assisted)
+- Analytics and insights
+
+**Student**
+- Enroll in courses via join codes
+- View assignments and due dates
+- Submit work
+- View grades and feedback
+
+## 📝 API Endpoints
+
+### Authentication
+- `POST /api/v1/auth/register` - Register new user
+- `POST /api/v1/auth/login` - Login
+- `POST /api/v1/auth/refresh` - Refresh access token
+- `POST /api/v1/auth/logout` - Logout
+- `GET /api/v1/auth/me` - Get current user
+
+### Courses (Professor)
+- `POST /api/v1/courses` - Create course
+- `GET /api/v1/courses` - List courses
+- `GET /api/v1/courses/{id}` - Get course details
+- `PUT /api/v1/courses/{id}` - Update course
+- `DELETE /api/v1/courses/{id}` - Soft delete course
+- `GET /api/v1/courses/{id}/students` - List enrolled students
+
+### Enrollments (Student)
+- `POST /api/v1/enrollments/join` - Join course by code
+- `GET /api/v1/enrollments/my-courses` - List enrolled courses
+- `DELETE /api/v1/enrollments/{course_id}` - Drop course
+
+### Assignments (Professor)
+- `POST /api/v1/assignments` - Create assignment
+- `GET /api/v1/assignments?course_id={id}` - List assignments
+- `GET /api/v1/assignments/{id}` - Get assignment
+- `PUT /api/v1/assignments/{id}` - Update assignment
+- `DELETE /api/v1/assignments/{id}` - Soft delete assignment
+
+### Rubrics (Professor)
+- `POST /api/v1/assignments/{id}/rubrics` - Create rubrics
+- `GET /api/v1/assignments/{id}/rubrics` - List rubrics
+- `PUT /api/v1/rubrics/{id}` - Update rubric
+- `DELETE /api/v1/rubrics/{id}` - Delete rubric
+
+## 🧪 Testing
+
+### Backend
 ```bash
-make install-hooks
+cd backend
+pytest
 ```
 
-Hooks run on each commit:
-
-- **Ruff** — Python linting and import sorting (`backend/`)
-- **Black** — Python formatting (`backend/`)
-- **ESLint** — TypeScript/React linting (`frontend/`)
-
-Run manually:
-
+### Frontend
 ```bash
-pre-commit run --all-files
+cd frontend
+npm run test
 ```
 
-## CI/CD
+## 📦 Database Schema
 
-GitHub Actions workflows live in [`.github/workflows/`](.github/workflows/):
+Key tables:
+- `users` - User accounts with roles
+- `courses` - Course information with join codes
+- `enrollments` - Student course enrollments
+- `assignments` - Assignment details
+- `rubrics` - Grading criteria with weights
+- `submissions` - Student work submissions
+- `evaluations` - AI + manual grades
 
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| [`ci.yml`](.github/workflows/ci.yml) | Pull requests | Python (ruff, black, pytest ≥80% coverage, mypy), frontend (eslint, tsc, vitest, build), Docker health |
-| [`deploy-staging.yml`](.github/workflows/deploy-staging.yml) | Push to `main` | Full CI → ECR push → ECS staging → Alembic migrate → smoke test → Slack |
-| [`deploy-production.yml`](.github/workflows/deploy-production.yml) | Tags `v*.*.*` | Manual approval → promote staging images → blue/green ECS → rollback on failure → GitHub Release |
+See `backend/alembic/versions/001_initial_schema.py` for complete schema.
 
-Configure secrets and environments using [`.github/SECRETS.md`](.github/SECRETS.md). Replace placeholders in [`deploy/ecs/`](deploy/ecs/) task definitions before the first AWS deploy.
+## 🔄 CI/CD
 
-## Testing
+GitHub Actions workflows:
+- `.github/workflows/ci.yml` - Run tests on PRs
+- `.github/workflows/deploy-staging.yml` - Deploy to staging
+- `.github/workflows/deploy-production.yml` - Deploy to production
 
-```bash
-make test
-```
+## 🤝 Contributing
 
-Backend only:
+1. Create a feature branch: `git checkout -b feature/my-feature`
+2. Make changes and test thoroughly
+3. Run linters: `npm run lint:fix` (frontend), `black .` (backend)
+4. Commit with descriptive message
+5. Push and create pull request
 
-```bash
-cd backend && pytest -v --cov=app
-```
+## 📄 License
 
-Frontend only:
+[Add license information]
 
-```bash
-cd frontend && npm run typecheck && npm run lint
-```
+## 👥 Team
 
-## Production deployment
+[Add team members]
 
-```bash
-cp .env.example .env
-# Edit .env with production values (APP_ENV=production, DEBUG=false)
-bash scripts/prod.sh
-```
+## 🙏 Acknowledgments
 
-Production builds use multi-stage Dockerfiles in `docker/` with no hot-reload. Nginx terminates HTTP and routes `/api` to the backend and `/` to the frontend.
-
-## API overview
-
-| Method | Path                    | Description        |
-|--------|-------------------------|--------------------|
-| GET    | `/api/v1/health`        | Liveness check     |
-| GET    | `/api/v1/health/ready`  | Readiness check    |
-| POST   | `/api/v1/auth/register` | Register user      |
-| POST   | `/api/v1/auth/login`    | Obtain JWT         |
-| GET    | `/api/v1/users/me`      | Current user       |
-
-## License
-
-Proprietary — GradeAI. All rights reserved.
+Built with modern best practices and production-ready patterns.
