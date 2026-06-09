@@ -1,34 +1,61 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+from fastapi import HTTPException, status
 from jose import JWTError, jwt
-import bcrypt
 
 from app.core.config import get_settings
+from app.core.enums import UserRole
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+_password_hasher = PasswordHasher()
+
+
+def hash_password(plain: str) -> str:
+    return _password_hasher.hash(plain)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
-    except ValueError:
+        return _password_hasher.verify(hashed, plain)
+    except VerifyMismatchError:
         return False
 
 
-def get_password_hash(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
+def create_access_token(user_id: uuid.UUID, role: UserRole) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + (
-        expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
-    )
-    payload = {"sub": str(subject), "exp": expire, "type": "access"}
+    expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "role": role.value,
+        "jti": str(uuid.uuid4()),
+        "type": "access",
+        "exp": expire,
+    }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_token(token: str) -> dict[str, Any] | None:
+def create_refresh_token(user_id: uuid.UUID) -> str:
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "jti": str(uuid.uuid4()),
+        "type": "refresh",
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_token(token: str) -> dict[str, Any]:
     settings = get_settings()
     try:
         return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-    except JWTError:
-        return None
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc

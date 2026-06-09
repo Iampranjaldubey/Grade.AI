@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_password_hash, verify_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User
 from app.schemas.user import UserCreate
 
@@ -25,7 +25,7 @@ class UserService:
             email=data.email,
             name=data.name,
             role=data.role,
-            password_hash=get_password_hash(data.password),
+            password_hash=hash_password(data.password),
         )
         self.db.add(user)
         await self.db.flush()

@@ -12,11 +12,14 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "test-secret-key-for-unit-tests")
 
 from app.core.config import clear_settings_cache, get_settings
-from app.core.deps import get_db
+from app.core.deps import get_db, get_redis
 from app.db.session import Base, close_db_pool, get_session_factory, init_db_pool
 from app.main import create_app
+from tests.fake_redis import FakeRedis
 
 clear_settings_cache()
+
+fake_redis = FakeRedis()
 
 
 @pytest.fixture(scope="session")
@@ -45,6 +48,13 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     clear_settings_cache()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def clear_fake_redis() -> AsyncGenerator[None, None]:
+    fake_redis._data.clear()
+    yield
+    fake_redis._data.clear()
+
+
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     clear_settings_cache()
@@ -58,7 +68,11 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             await db_session.rollback()
             raise
 
+    async def override_get_redis() -> FakeRedis:
+        return fake_redis
+
     application.dependency_overrides[get_db] = override_get_db
+    application.dependency_overrides[get_redis] = override_get_redis
 
     transport = ASGITransport(app=application)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

@@ -25,6 +25,7 @@ class Course(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     course_name: Mapped[str] = mapped_column(String(255), nullable=False)
     course_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    join_code: Mapped[str] = mapped_column(String(8), nullable=False, unique=True, index=True)
     professor_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),

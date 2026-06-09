@@ -73,7 +73,14 @@ def register_exception_handlers(app: FastAPI) -> None:
                 request=request,
                 code="validation_error",
                 message="Request validation failed",
-                details=exc.errors(),
+                details=[
+                    {
+                        "loc": list(e.get("loc", [])),
+                        "msg": e.get("msg", ""),
+                        "type": e.get("type", ""),
+                    }
+                    for e in exc.errors()
+                ],
             ),
         )
 

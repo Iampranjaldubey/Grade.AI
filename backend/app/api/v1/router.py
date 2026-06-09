@@ -34,9 +34,19 @@ api_router.include_router(
     tags=["Courses"],
 )
 api_router.include_router(
+    courses.enrollments_router,
+    prefix="/enrollments",
+    tags=["Enrollments"],
+)
+api_router.include_router(
     assignments.router,
     prefix="/assignments",
     tags=["Assignments"],
+)
+api_router.include_router(
+    assignments.rubrics_router,
+    prefix="/rubrics",
+    tags=["Rubrics"],
 )
 api_router.include_router(
     submissions.router,

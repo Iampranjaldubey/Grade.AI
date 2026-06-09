@@ -27,7 +27,7 @@ class Rubric(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     criteria_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     max_points: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    weight: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    weight: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     evaluation_hints: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     assignment: Mapped["Assignment"] = relationship("Assignment", back_populates="rubrics")

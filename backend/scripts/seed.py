@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.enums import UserRole
-from app.core.security import get_password_hash
+from app.core.security import hash_password
 from app.db.session import close_db_pool, get_session_factory, init_db_pool
 from app.models.user import User
 
@@ -28,7 +28,7 @@ async def seed() -> None:
         admin = User(
             email="admin@gradeai.local",
             name="GradeAI Admin",
-            password_hash=get_password_hash("changeme123"),
+            password_hash=hash_password("changeme123"),
             role=UserRole.ADMIN,
         )
         session.add(admin)
