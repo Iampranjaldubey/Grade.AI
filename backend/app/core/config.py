@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     aws_region: str = Field(default="us-east-1", alias="AWS_REGION")
     aws_s3_bucket: str = Field(default="gradeai-uploads", alias="AWS_S3_BUCKET")
     aws_s3_endpoint: str | None = Field(default=None, alias="AWS_S3_ENDPOINT")
+    aws_endpoint_url: str | None = Field(default=None, alias="AWS_ENDPOINT_URL")
 
     celery_broker_url: str = Field(
         default="redis://localhost:6379/1",

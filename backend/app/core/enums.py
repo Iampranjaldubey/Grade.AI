@@ -34,6 +34,7 @@ class DocumentType(StrEnum):
 
 class ParseStatus(StrEnum):
     PENDING = "pending"
+    PROCESSING = "processing"
     SUCCESS = "success"
     FAILED = "failed"
 

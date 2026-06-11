@@ -49,14 +49,14 @@ api_router.include_router(
     tags=["Rubrics"],
 )
 api_router.include_router(
-    submissions.router,
-    prefix="/submissions",
-    tags=["Submissions"],
-)
-api_router.include_router(
     uploads.router,
     prefix="/uploads",
     tags=["Uploads"],
+)
+api_router.include_router(
+    submissions.router,
+    prefix="/submissions",
+    tags=["Submissions"],
 )
 api_router.include_router(
     evaluations.router,
