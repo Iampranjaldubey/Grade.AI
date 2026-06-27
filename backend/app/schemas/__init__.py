@@ -14,6 +14,14 @@ from app.schemas.document import (
     PresignResponse,
 )
 from app.schemas.enrollment import EnrollmentOut, JoinCourseRequest
+from app.schemas.evaluation import (
+    ApproveEvaluationRequest,
+    CriteriaScoreOut,
+    EvaluationListOut,
+    EvaluationOut,
+    OverrideEvaluationRequest,
+    StudentEvaluationOut,
+)
 from app.schemas.health import HealthResponse, ServiceStatus
 from app.schemas.rubric import RubricCreate, RubricListCreate, RubricOut, RubricUpdate
 from app.schemas.submission import (
@@ -33,6 +41,7 @@ from app.schemas.user import (
 )
 
 __all__ = [
+    "ApproveEvaluationRequest",
     "AssignmentCreate",
     "AssignmentListOut",
     "AssignmentOut",
@@ -43,13 +52,17 @@ __all__ = [
     "CourseListOut",
     "CourseOut",
     "CourseUpdate",
+    "CriteriaScoreOut",
     "DocumentOut",
     "DocumentStatusOut",
     "EnrollmentOut",
+    "EvaluationListOut",
+    "EvaluationOut",
     "HealthResponse",
     "JoinCourseRequest",
     "LogoutRequest",
     "MessageResponse",
+    "OverrideEvaluationRequest",
     "PresignRequest",
     "PresignResponse",
     "RefreshRequest",
@@ -58,6 +71,7 @@ __all__ = [
     "RubricOut",
     "RubricUpdate",
     "ServiceStatus",
+    "StudentEvaluationOut",
     "SubmissionCreate",
     "SubmissionOut",
     "SubmissionStatusOut",

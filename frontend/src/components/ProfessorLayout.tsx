@@ -1,5 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, LayoutDashboard, LogOut, GraduationCap } from "lucide-react";
+import { BookOpen, LayoutDashboard, LogOut, GraduationCap, ClipboardCheck } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { evaluationsApi } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { cn } from "@/lib/utils";
 
@@ -11,9 +13,19 @@ export function ProfessorLayout({ children }: ProfessorLayoutProps) {
   const { user, logout } = useAuthStore();
   const location = useLocation();
 
+  // Fetch pending evaluations count
+  const { data: pendingEvaluations = [] } = useQuery({
+    queryKey: ["evaluations", "pending"],
+    queryFn: () => evaluationsApi.getPending(),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  const pendingCount = pendingEvaluations.length;
+
   const navigation = [
     { name: "Dashboard", href: "/professor/dashboard", icon: LayoutDashboard },
     { name: "Courses", href: "/professor/courses", icon: BookOpen },
+    { name: "Evaluations", href: "/professor/evaluations", icon: ClipboardCheck, badge: pendingCount },
   ];
 
   return (
@@ -38,7 +50,7 @@ export function ProfessorLayout({ children }: ProfessorLayoutProps) {
                       key={item.name}
                       to={item.href}
                       className={cn(
-                        "inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition",
+                        "inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition relative",
                         isActive
                           ? "bg-primary-50 text-primary"
                           : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
@@ -46,6 +58,11 @@ export function ProfessorLayout({ children }: ProfessorLayoutProps) {
                     >
                       <item.icon className="w-4 h-4 mr-2" />
                       {item.name}
+                      {item.badge !== undefined && item.badge > 0 && (
+                        <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">
+                          {item.badge > 99 ? "99+" : item.badge}
+                        </span>
+                      )}
                     </Link>
                   );
                 })}

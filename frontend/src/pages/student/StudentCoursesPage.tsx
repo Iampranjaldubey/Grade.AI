@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, Plus } from "lucide-react";
 import * as api from "@/lib/api";
@@ -7,6 +8,7 @@ import { JoinCourseModal } from "@/components/JoinCourseModal";
 import { formatDate } from "@/lib/utils";
 
 export function StudentCoursesPage() {
+  const navigate = useNavigate();
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
 
   const { data: courses = [], isLoading } = useQuery({
@@ -64,9 +66,10 @@ export function StudentCoursesPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {courses.map((course) => (
-              <div
+              <button
                 key={course.id}
-                className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition border border-transparent hover:border-primary-200"
+                onClick={() => navigate(`/student/courses/${course.id}`)}
+                className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition border border-transparent hover:border-primary-200 text-left"
               >
                 <div className="mb-4">
                   <h3 className="text-xl font-semibold text-gray-900 mb-1">
@@ -87,7 +90,7 @@ export function StudentCoursesPage() {
                     Enrolled {formatDate(course.created_at)}
                   </p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}

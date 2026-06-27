@@ -273,3 +273,98 @@ export async function getRubrics(assignmentId: string): Promise<RubricOut[]> {
   const { data } = await apiClient.get<RubricOut[]>(`/assignments/${assignmentId}/rubrics`);
   return data;
 }
+
+// ---------------------------------------------------------------------------
+// Uploads API
+// ---------------------------------------------------------------------------
+
+export const uploadsApi = {
+  presign: async (payload: import("@/types").PresignRequest): Promise<import("@/types").PresignResponse> => {
+    const { data } = await apiClient.post<import("@/types").PresignResponse>("/uploads/presign", payload);
+    return data;
+  },
+
+  confirm: async (payload: import("@/types").ConfirmUploadRequest): Promise<import("@/types").DocumentOut> => {
+    const { data } = await apiClient.post<import("@/types").DocumentOut>("/uploads/confirm", payload);
+    return data;
+  },
+
+  getStatus: async (documentId: string): Promise<{ id: string; file_name: string; parse_status: import("@/types").ParseStatus; chunk_count: number }> => {
+    const { data } = await apiClient.get(`/uploads/${documentId}/status`);
+    return data;
+  },
+
+  getCourseDocuments: async (courseId: string): Promise<import("@/types").DocumentOut[]> => {
+    const { data } = await apiClient.get<import("@/types").DocumentOut[]>(`/uploads/courses/${courseId}/documents`);
+    return data;
+  },
+
+  deleteDocument: async (documentId: string): Promise<void> => {
+    await apiClient.delete(`/uploads/${documentId}`);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Submissions API
+// ---------------------------------------------------------------------------
+
+export const submissionsApi = {
+  submit: async (payload: import("@/types").SubmissionCreate): Promise<import("@/types").SubmissionOut> => {
+    const { data } = await apiClient.post<import("@/types").SubmissionOut>("/submissions", payload);
+    return data;
+  },
+
+  getMySubmission: async (assignmentId: string): Promise<import("@/types").SubmissionOut> => {
+    const { data } = await apiClient.get<import("@/types").SubmissionOut>(`/submissions/${assignmentId}/my-submission`);
+    return data;
+  },
+
+  getAllSubmissions: async (assignmentId: string): Promise<Array<import("@/types").SubmissionOut & { student_name: string; student_email: string }>> => {
+    const { data } = await apiClient.get(`/submissions/${assignmentId}/all`);
+    return data;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Evaluations API
+// ---------------------------------------------------------------------------
+
+export const evaluationsApi = {
+  getPending: async (courseId?: string): Promise<import("@/types").EvaluationListOut[]> => {
+    const { data } = await apiClient.get<import("@/types").EvaluationListOut[]>("/evaluations/pending", {
+      params: courseId ? { course_id: courseId } : undefined,
+    });
+    return data;
+  },
+
+  getDetail: async (evaluationId: string): Promise<import("@/types").EvaluationOut> => {
+    const { data } = await apiClient.get<import("@/types").EvaluationOut>(`/evaluations/${evaluationId}`);
+    return data;
+  },
+
+  approve: async (evaluationId: string, feedback?: string): Promise<import("@/types").EvaluationOut> => {
+    const { data } = await apiClient.post<import("@/types").EvaluationOut>(
+      `/evaluations/${evaluationId}/approve`,
+      { professor_feedback: feedback }
+    );
+    return data;
+  },
+
+  override: async (evaluationId: string, payload: import("@/types").OverrideEvaluationRequest): Promise<import("@/types").EvaluationOut> => {
+    const { data } = await apiClient.post<import("@/types").EvaluationOut>(
+      `/evaluations/${evaluationId}/override`,
+      payload
+    );
+    return data;
+  },
+
+  trigger: async (submissionId: string): Promise<{ message: string; submission_id: string; task_id: string }> => {
+    const { data } = await apiClient.post(`/evaluations/trigger/${submissionId}`);
+    return data;
+  },
+
+  getMyGrade: async (submissionId: string): Promise<import("@/types").EvaluationOut> => {
+    const { data } = await apiClient.get<import("@/types").EvaluationOut>(`/evaluations/submission/${submissionId}`);
+    return data;
+  },
+};

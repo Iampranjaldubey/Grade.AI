@@ -5,7 +5,6 @@ import * as api from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { StudentLayout } from "@/components/StudentLayout";
 import { JoinCourseModal } from "@/components/JoinCourseModal";
-import { formatDate } from "@/lib/utils";
 
 export function StudentDashboard() {
   const { user } = useAuthStore();

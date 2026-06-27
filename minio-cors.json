@@ -1,0 +1,26 @@
+{
+    "CORSRules": [
+        {
+            "AllowedOrigins": [
+                "http://localhost:5173",
+                "http://localhost:3000",
+                "http://localhost"
+            ],
+            "AllowedMethods": [
+                "GET",
+                "PUT",
+                "POST",
+                "DELETE",
+                "HEAD"
+            ],
+            "AllowedHeaders": [
+                "*"
+            ],
+            "ExposeHeaders": [
+                "ETag",
+                "Content-Length",
+                "x-amz-request-id"
+            ]
+        }
+    ]
+}

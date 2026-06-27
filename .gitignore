@@ -49,3 +49,7 @@ backend/alembic/versions/*.pyc
 # Uploads / local storage
 uploads/
 *.sqlite3
+
+# markdown 
+*.md
+*.txt

@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     gemini_model: str = Field(default="gemini-2.0-flash", alias="GEMINI_MODEL")
-
+    
+    aws_s3_public_endpoint: str | None = Field(default=None, alias="AWS_S3_PUBLIC_ENDPOINT")
     aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
     aws_region: str = Field(default="us-east-1", alias="AWS_REGION")
@@ -64,6 +65,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default=["http://localhost:5173", "http://localhost:3000"],
         alias="CORS_ORIGINS",
+        validation_alias="CORS_ORIGINS",
     )
 
     request_id_header: str = "X-Request-ID"

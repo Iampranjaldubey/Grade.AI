@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { 
   BookOpen, 
   Users, 
@@ -10,16 +10,20 @@ import {
   Plus,
   Calendar,
   Award,
-  Clock
+  FolderOpen,
+  Trash2,
+  Loader2
 } from "lucide-react";
 import toast from "react-hot-toast";
 import * as api from "@/lib/api";
+import { uploadsApi } from "@/lib/api";
 import { ProfessorLayout } from "@/components/ProfessorLayout";
 import { CreateAssignmentModal } from "@/components/CreateAssignmentModal";
+import { DocumentUploadZone } from "@/components/DocumentUploadZone";
 import { formatDate, formatDateTime, cn } from "@/lib/utils";
-import type { AssignmentListOut } from "@/types";
+import type { AssignmentListOut, DocumentOut, ParseStatus } from "@/types";
 
-type Tab = "overview" | "assignments" | "students";
+type Tab = "overview" | "assignments" | "students" | "documents";
 
 export function CourseDetailPage() {
   const { courseId } = useParams<{ courseId: string }>();
@@ -44,6 +48,12 @@ export function CourseDetailPage() {
     queryKey: ["course-students", courseId],
     queryFn: () => api.getCourseStudents(courseId!),
     enabled: !!courseId && activeTab === "students",
+  });
+
+  const { data: documents = [], isLoading: documentsLoading, refetch: refetchDocuments } = useQuery({
+    queryKey: ["course-documents", courseId],
+    queryFn: () => uploadsApi.getCourseDocuments(courseId!),
+    enabled: !!courseId && activeTab === "documents",
   });
 
   const handleCopyJoinCode = async () => {
@@ -110,6 +120,13 @@ export function CourseDetailPage() {
             >
               Students
             </TabButton>
+            <TabButton
+              active={activeTab === "documents"}
+              onClick={() => setActiveTab("documents")}
+              icon={<FolderOpen className="w-5 h-5" />}
+            >
+              Documents
+            </TabButton>
           </nav>
         </div>
 
@@ -132,6 +149,15 @@ export function CourseDetailPage() {
 
         {activeTab === "students" && (
           <StudentsTab students={students} isLoading={studentsLoading} />
+        )}
+
+        {activeTab === "documents" && (
+          <DocumentsTab 
+            courseId={courseId!}
+            documents={documents}
+            isLoading={documentsLoading}
+            onDocumentUploaded={() => refetchDocuments()}
+          />
         )}
       </div>
 
@@ -267,7 +293,7 @@ function OverviewTab({
 }
 
 function AssignmentsTab({
-  courseId,
+  courseId: _courseId,
   assignments,
   isLoading,
   onCreateNew,
@@ -472,5 +498,247 @@ function StudentsTab({
         </table>
       </div>
     </div>
+  );
+}
+
+function DocumentsTab({
+  courseId,
+  documents,
+  isLoading,
+  onDocumentUploaded,
+}: {
+  courseId: string;
+  documents: DocumentOut[];
+  isLoading: boolean;
+  onDocumentUploaded: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [uploadingSections, setUploadingSections] = useState<Record<string, boolean>>({});
+
+  // Auto-refresh when any document is processing
+  useEffect(() => {
+    const hasProcessing = documents.some(
+      (doc) => doc.parse_status === "pending" || doc.parse_status === "processing"
+    );
+
+    if (hasProcessing) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ["course-documents", courseId] });
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [documents, courseId, queryClient]);
+
+  const deleteMutation = useMutation({
+    mutationFn: (documentId: string) => uploadsApi.deleteDocument(documentId),
+    onSuccess: () => {
+      toast.success("Document deleted");
+      queryClient.invalidateQueries({ queryKey: ["course-documents", courseId] });
+    },
+    onError: () => {
+      toast.error("Failed to delete document");
+    },
+  });
+
+  const handleDelete = (documentId: string, fileName: string) => {
+    if (confirm(`Delete "${fileName}"?`)) {
+      deleteMutation.mutate(documentId);
+    }
+  };
+
+  const notesDocuments = documents.filter((doc) => doc.doc_type === "notes");
+  const rubricDocuments = documents.filter((doc) => doc.doc_type === "rubric");
+  const sampleDocuments = documents.filter((doc) => doc.doc_type === "sample_solution");
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="h-6 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="h-32 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Lecture Notes */}
+      <DocumentSection
+        title="Lecture Notes"
+        docType="notes"
+        documents={notesDocuments}
+        courseId={courseId}
+        isUploading={uploadingSections["notes"]}
+        onUploadStart={() => setUploadingSections((prev) => ({ ...prev, notes: true }))}
+        onUploadEnd={() => {
+          setUploadingSections((prev) => ({ ...prev, notes: false }));
+          onDocumentUploaded();
+        }}
+        onDelete={handleDelete}
+      />
+
+      {/* Rubric Documents */}
+      <DocumentSection
+        title="Rubric Documents"
+        docType="rubric"
+        documents={rubricDocuments}
+        courseId={courseId}
+        isUploading={uploadingSections["rubric"]}
+        onUploadStart={() => setUploadingSections((prev) => ({ ...prev, rubric: true }))}
+        onUploadEnd={() => {
+          setUploadingSections((prev) => ({ ...prev, rubric: false }));
+          onDocumentUploaded();
+        }}
+        onDelete={handleDelete}
+      />
+
+      {/* Sample Solutions */}
+      <DocumentSection
+        title="Sample Solutions"
+        docType="sample_solution"
+        documents={sampleDocuments}
+        courseId={courseId}
+        isUploading={uploadingSections["sample_solution"]}
+        onUploadStart={() =>
+          setUploadingSections((prev) => ({ ...prev, sample_solution: true }))
+        }
+        onUploadEnd={() => {
+          setUploadingSections((prev) => ({ ...prev, sample_solution: false }));
+          onDocumentUploaded();
+        }}
+        onDelete={handleDelete}
+      />
+    </div>
+  );
+}
+
+function DocumentSection({
+  title,
+  docType,
+  documents,
+  courseId,
+  isUploading: _isUploading,
+  onUploadStart,
+  onUploadEnd,
+  onDelete,
+}: {
+  title: string;
+  docType: import("@/types").DocumentType;
+  documents: DocumentOut[];
+  courseId: string;
+  isUploading: boolean;
+  onUploadStart: () => void;
+  onUploadEnd: () => void;
+  onDelete: (documentId: string, fileName: string) => void;
+}) {
+  const [showUpload, setShowUpload] = useState(false);
+
+  const handleUploadSuccess = () => {
+    setShowUpload(false);
+    onUploadEnd();
+  };
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+        <button
+          onClick={() => {
+            setShowUpload(!showUpload);
+            if (!showUpload) onUploadStart();
+          }}
+          className="text-sm font-medium text-primary hover:text-primary-600 transition"
+        >
+          {showUpload ? "Cancel" : "+ Upload"}
+        </button>
+      </div>
+
+      {showUpload && (
+        <div className="mb-4">
+          <DocumentUploadZone
+            docType={docType}
+            courseId={courseId}
+            onSuccess={handleUploadSuccess}
+            onError={() => onUploadEnd()}
+          />
+        </div>
+      )}
+
+      {documents.length === 0 ? (
+        <p className="text-gray-500 text-sm">No documents uploaded yet</p>
+      ) : (
+        <div className="space-y-2">
+          {documents.map((doc) => (
+            <DocumentItem key={doc.id} document={doc} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentItem({
+  document,
+  onDelete,
+}: {
+  document: DocumentOut;
+  onDelete: (documentId: string, fileName: string) => void;
+}) {
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+      <div className="flex items-center gap-3 flex-1">
+        <FileText className="w-5 h-5 text-gray-400" />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-gray-900">{document.file_name}</p>
+          <p className="text-xs text-gray-500">{formatFileSize(document.file_size_bytes)}</p>
+        </div>
+        <ParseStatusBadge status={document.parse_status} />
+      </div>
+      <button
+        onClick={() => onDelete(document.id, document.file_name)}
+        className="p-2 text-gray-400 hover:text-red-600 transition"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+function ParseStatusBadge({ status }: { status: ParseStatus }) {
+  const config: Record<ParseStatus, { label: string; className: string; icon?: React.ReactNode }> = {
+    pending: {
+      label: "Pending",
+      className: "bg-yellow-100 text-yellow-800",
+    },
+    processing: {
+      label: "Processing",
+      className: "bg-blue-100 text-blue-800",
+      icon: <Loader2 className="w-3 h-3 animate-spin" />,
+    },
+    success: {
+      label: "Ready",
+      className: "bg-green-100 text-green-800",
+      icon: <Check className="w-3 h-3" />,
+    },
+    failed: {
+      label: "Failed",
+      className: "bg-red-100 text-red-800",
+    },
+  };
+
+  const { label, className, icon } = config[status];
+
+  return (
+    <span className={cn("px-2 py-1 text-xs font-medium rounded-full flex items-center gap-1", className)}>
+      {icon}
+      {label}
+    </span>
   );
 }

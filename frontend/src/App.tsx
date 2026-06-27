@@ -13,10 +13,14 @@ import { ProfessorDashboard } from "@/pages/professor/ProfessorDashboard";
 import { CourseListPage } from "@/pages/professor/CourseListPage";
 import { CourseDetailPage } from "@/pages/professor/CourseDetailPage";
 import { AssignmentDetailPage } from "@/pages/professor/AssignmentDetailPage";
+import { PendingEvaluationsPage } from "@/pages/professor/PendingEvaluationsPage";
+import { EvaluationReviewPage } from "@/pages/professor/EvaluationReviewPage";
 
 // Student pages
 import { StudentDashboard } from "@/pages/student/StudentDashboard";
 import { StudentCoursesPage } from "@/pages/student/StudentCoursesPage";
+import { StudentCourseDetailPage } from "@/pages/student/StudentCourseDetailPage";
+import { AssignmentSubmissionPage } from "@/pages/student/AssignmentSubmissionPage";
 
 // Other
 import { NotFoundPage } from "@/pages/NotFoundPage";
@@ -87,6 +91,22 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/professor/evaluations"
+          element={
+            <ProtectedRoute requiredRole="professor">
+              <PendingEvaluationsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/professor/evaluations/:evaluationId"
+          element={
+            <ProtectedRoute requiredRole="professor">
+              <EvaluationReviewPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Student routes */}
         <Route
@@ -102,6 +122,22 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="student">
               <StudentCoursesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/student/courses/:courseId"
+          element={
+            <ProtectedRoute requiredRole="student">
+              <StudentCourseDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/student/assignments/:assignmentId"
+          element={
+            <ProtectedRoute requiredRole="student">
+              <AssignmentSubmissionPage />
             </ProtectedRoute>
           }
         />

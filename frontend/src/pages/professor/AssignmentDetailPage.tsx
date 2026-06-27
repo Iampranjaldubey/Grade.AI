@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,12 +13,17 @@ import {
   Save,
   AlertCircle,
   CheckCircle,
+  FileText,
+  Loader2,
+  Eye,
+  Play,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import * as api from "@/lib/api";
+import { submissionsApi, evaluationsApi } from "@/lib/api";
 import { ProfessorLayout } from "@/components/ProfessorLayout";
 import { formatDateTime, cn } from "@/lib/utils";
-import type { RubricCreate } from "@/types";
+import type { RubricCreate, SubmissionStatus } from "@/types";
 
 const rubricSchema = z.object({
   criteria_name: z.string().min(1, "Criteria name is required"),
@@ -31,7 +36,7 @@ const rubricSchema = z.object({
 type RubricFormData = z.infer<typeof rubricSchema>;
 
 export function AssignmentDetailPage() {
-  const { courseId, assignmentId } = useParams<{ courseId: string; assignmentId: string }>();
+  const { assignmentId } = useParams<{ courseId: string; assignmentId: string }>();
   const queryClient = useQueryClient();
   const [isAddingCriterion, setIsAddingCriterion] = useState(false);
   const [criteria, setCriteria] = useState<RubricCreate[]>([]);
@@ -45,6 +50,12 @@ export function AssignmentDetailPage() {
   const { data: rubrics = [], isLoading: rubricsLoading } = useQuery({
     queryKey: ["rubrics", assignmentId],
     queryFn: () => api.getRubrics(assignmentId!),
+    enabled: !!assignmentId,
+  });
+
+  const { data: submissions = [], isLoading: submissionsLoading } = useQuery({
+    queryKey: ["submissions", assignmentId],
+    queryFn: () => submissionsApi.getAllSubmissions(assignmentId!),
     enabled: !!assignmentId,
   });
 
@@ -185,8 +196,9 @@ export function AssignmentDetailPage() {
           </div>
         </div>
 
-        {/* Right Column - Rubric Builder */}
+        {/* Right Column - Rubric Builder & Submissions */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Rubric Builder */}
           <div className="bg-white rounded-xl shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -412,9 +424,239 @@ export function AssignmentDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Submissions Section */}
+          {rubrics.length > 0 && (
+            <SubmissionsSection
+              assignmentId={assignmentId!}
+              submissions={submissions}
+              isLoading={submissionsLoading}
+            />
+          )}
         </div>
       </div>
     </ProfessorLayout>
+  );
+}
+
+interface SubmissionsSectionProps {
+  assignmentId: string;
+  submissions: Array<import("@/types").SubmissionOut & { student_name: string; student_email: string }>;
+  isLoading: boolean;
+}
+
+function SubmissionsSection({ assignmentId, submissions, isLoading }: SubmissionsSectionProps) {
+  const queryClient = useQueryClient();
+  const [evaluatingIds, setEvaluatingIds] = useState<Set<string>>(new Set());
+
+  const triggerEvaluationMutation = useMutation({
+    mutationFn: (submissionId: string) => evaluationsApi.trigger(submissionId),
+    onSuccess: (_, submissionId) => {
+      toast.success("Evaluation triggered successfully!");
+      setEvaluatingIds((prev) => new Set(prev).add(submissionId));
+      // Refresh after 3 seconds
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["submissions", assignmentId] });
+        setEvaluatingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(submissionId);
+          return next;
+        });
+      }, 3000);
+    },
+    onError: (error: { response?: { data?: { detail?: string } } }) => {
+      const message = error.response?.data?.detail || "Failed to trigger evaluation";
+      toast.error(message);
+    },
+  });
+
+  const handleEvaluateAll = () => {
+    const submittedSubmissions = submissions.filter(
+      (s) => s.status === "submitted"
+    );
+    if (submittedSubmissions.length === 0) {
+      toast.error("No submitted submissions to evaluate");
+      return;
+    }
+    submittedSubmissions.forEach((submission) => {
+      triggerEvaluationMutation.mutate(submission.id);
+    });
+  };
+
+  const getStatusColor = (status: SubmissionStatus) => {
+    const colors = {
+      submitted: "bg-blue-100 text-blue-800",
+      evaluating: "bg-yellow-100 text-yellow-800",
+      evaluated: "bg-green-100 text-green-800",
+      late: "bg-red-100 text-red-800",
+    };
+    return colors[status] || "bg-gray-100 text-gray-800";
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 bg-gray-200 rounded w-1/4"></div>
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-16 bg-gray-200 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">Submissions</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        {submissions.some((s) => s.status === "submitted") && (
+          <button
+            onClick={handleEvaluateAll}
+            disabled={triggerEvaluationMutation.isPending}
+            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Play className="w-4 h-4" />
+            Evaluate All
+          </button>
+        )}
+      </div>
+
+      {submissions.length === 0 ? (
+        <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
+          <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+          <p className="text-gray-600 font-medium">No submissions yet</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Students haven't submitted their work for this assignment
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Student
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Submitted At
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  AI Score
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {submissions.map((submission) => (
+                <SubmissionRow
+                  key={submission.id}
+                  submission={submission}
+                  isEvaluating={evaluatingIds.has(submission.id)}
+                  onEvaluate={() => triggerEvaluationMutation.mutate(submission.id)}
+                  getStatusColor={getStatusColor}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SubmissionRowProps {
+  submission: import("@/types").SubmissionOut & { student_name: string; student_email: string };
+  isEvaluating: boolean;
+  onEvaluate: () => void;
+  getStatusColor: (status: SubmissionStatus) => string;
+}
+
+function SubmissionRow({ submission, isEvaluating, onEvaluate, getStatusColor }: SubmissionRowProps) {
+  const navigate = useNavigate();
+  
+  // Query to get evaluation if status is evaluated
+  const { data: evaluation } = useQuery({
+    queryKey: ["evaluation", submission.id],
+    queryFn: () => evaluationsApi.getMyGrade(submission.id),
+    enabled: submission.status === "evaluated",
+  });
+
+  return (
+    <tr className="hover:bg-gray-50">
+      <td className="px-4 py-4 whitespace-nowrap">
+        <div>
+          <div className="text-sm font-medium text-gray-900">
+            {submission.student_name}
+          </div>
+          <div className="text-sm text-gray-500">{submission.student_email}</div>
+        </div>
+      </td>
+      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+        {formatDateTime(submission.submitted_at)}
+      </td>
+      <td className="px-4 py-4 whitespace-nowrap">
+        <span
+          className={cn(
+            "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
+            getStatusColor(submission.status)
+          )}
+        >
+          {submission.status}
+        </span>
+      </td>
+      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+        {evaluation ? (
+          <span className="font-medium">{evaluation.ai_score}</span>
+        ) : (
+          <span className="text-gray-400">Pending</span>
+        )}
+      </td>
+      <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
+        <div className="flex items-center justify-end gap-2">
+          {submission.status === "submitted" && (
+            <button
+              onClick={onEvaluate}
+              disabled={isEvaluating}
+              className="inline-flex items-center gap-1 px-3 py-1 bg-primary hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isEvaluating ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Evaluating
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  Evaluate
+                </>
+              )}
+            </button>
+          )}
+          {evaluation && (
+            <button
+              onClick={() => navigate(`/professor/evaluations/${evaluation.id}`)}
+              className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition"
+            >
+              <Eye className="w-4 h-4" />
+              Review
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
 

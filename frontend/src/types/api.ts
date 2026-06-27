@@ -4,6 +4,14 @@ export type GradingMode = "auto" | "manual" | "hybrid";
 
 export type EnrollmentStatus = "active" | "dropped";
 
+export type ParseStatus = "pending" | "processing" | "success" | "failed";
+
+export type SubmissionStatus = "submitted" | "evaluating" | "evaluated" | "late";
+
+export type ApprovalStatus = "pending" | "approved" | "overridden";
+
+export type DocumentType = "rubric" | "notes" | "sample_solution" | "submission";
+
 export interface UserOut {
   id: string;
   name: string;
@@ -126,6 +134,109 @@ export interface EnrollmentOut {
 
 export interface JoinCourseRequest {
   join_code: string;
+}
+
+export interface DocumentOut {
+  id: string;
+  course_id: string;
+  assignment_id: string | null;
+  uploader_id: string;
+  doc_type: DocumentType;
+  file_name: string;
+  file_url: string;
+  mime_type: string;
+  file_size_bytes: number;
+  parse_status: ParseStatus;
+  created_at: string;
+}
+
+export interface SubmissionOut {
+  id: string;
+  assignment_id: string;
+  student_id: string;
+  file_url: string;
+  file_name: string;
+  submitted_at: string;
+  status: SubmissionStatus;
+}
+
+export interface EvaluationOut {
+  id: string;
+  submission_id: string;
+  ai_score: string;
+  final_score: string | null;
+  ai_feedback: {
+    criteria_scores: Array<{
+      criterion_name: string;
+      awarded: number;
+      max: number;
+      reasoning: string;
+    }>;
+    percentage: number;
+    confidence_score: number;
+  } | null;
+  professor_feedback: string | null;
+  strengths: string[] | null;
+  weaknesses: string[] | null;
+  missing_topics: string[] | null;
+  approval_status: ApprovalStatus;
+  evaluated_at: string;
+  approved_at: string | null;
+}
+
+export interface EvaluationListOut {
+  id: string;
+  submission_id: string;
+  ai_score: string;
+  approval_status: ApprovalStatus;
+  evaluated_at: string;
+  confidence_score: number;
+  student_name: string;
+  student_email: string;
+  assignment_title: string;
+}
+
+export interface PresignRequest {
+  file_name: string;
+  content_type: string;
+  doc_type: DocumentType;
+  course_id: string;
+  assignment_id?: string;
+}
+
+export interface PresignResponse {
+  upload_url: string;
+  file_key: string;
+  expires_in: number;
+}
+
+export interface ConfirmUploadRequest {
+  file_key: string;
+  file_name: string;
+  file_size_bytes: number;
+  doc_type: DocumentType;
+  course_id: string;
+  assignment_id?: string;
+}
+
+export interface SubmissionCreate {
+  assignment_id: string;
+  file_name: string;
+  file_key: string;
+  file_size_bytes: number;
+}
+
+export interface ApproveEvaluationRequest {
+  professor_feedback?: string;
+}
+
+export interface OverrideEvaluationRequest {
+  final_score: number;
+  professor_feedback: string;
+  criteria_overrides?: Array<{
+    criterion_name: string;
+    awarded: number;
+  }>;
 }
 
 export interface ApiError {

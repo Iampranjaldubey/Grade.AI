@@ -27,6 +27,250 @@ def process_submission(self, submission_id: str) -> dict:
     return {"submission_id": submission_id, "status": "processed"}
 
 
+@celery_app.task(name="gradeai.evaluate_submission", bind=True, max_retries=3)
+def evaluate_submission(self, submission_id: str) -> dict:
+    """
+    Evaluate a student submission using AI grading.
+    
+    Pipeline:
+    1. Load submission and related data from database
+    2. Check if document is fully processed
+    3. Retrieve relevant context (rubrics, notes, samples)
+    4. Call AI evaluator (Gemini) to grade
+    5. Store evaluation results in database
+    6. Update submission status
+    
+    Args:
+        submission_id: UUID string of the submission
+        
+    Returns:
+        Dict with evaluation results
+    """
+    from datetime import datetime
+    from decimal import Decimal
+    
+    from app.core.config import get_settings
+    from app.core.enums import ParseStatus, SubmissionStatus
+    from app.db.sync_session import get_sync_db
+    from app.infrastructure.chromadb_client import ChromaDBClient
+    from app.models.assignment import Assignment
+    from app.models.document import Document
+    from app.models.evaluation import Evaluation
+    from app.models.rubric import Rubric
+    from app.models.submission import Submission
+    from app.rag.embeddings import embedding_service
+    from app.rag.evaluator import GradingEvaluator
+    from app.rag.retrieval import RetrievalService
+    
+    settings = get_settings()
+    logger.info("evaluate_submission_started", submission_id=submission_id)
+    
+    try:
+        # Step 1: Load submission and related data
+        with get_sync_db() as db:
+            submission = db.query(Submission).filter(
+                Submission.id == uuid.UUID(submission_id)
+            ).first()
+            
+            if not submission:
+                logger.error("submission_not_found", submission_id=submission_id)
+                raise ValueError(f"Submission {submission_id} not found")
+            
+            # Load assignment and rubrics
+            assignment = db.query(Assignment).filter(
+                Assignment.id == submission.assignment_id
+            ).first()
+            
+            if not assignment:
+                raise ValueError(f"Assignment {submission.assignment_id} not found")
+            
+            rubrics = db.query(Rubric).filter(
+                Rubric.assignment_id == assignment.id
+            ).order_by(Rubric.created_at).all()
+            
+            if not rubrics:
+                logger.warning("no_rubrics_found", assignment_id=str(assignment.id))
+                raise ValueError("Cannot evaluate: no rubrics defined for this assignment")
+            
+            course_id = assignment.course_id
+            
+            # Step 2: Find the document for this submission
+            # Submission creates a Document with doc_type=submission
+            document = db.query(Document).filter(
+                Document.uploader_id == submission.student_id,
+                Document.assignment_id == assignment.id,
+                Document.doc_type == "submission",
+            ).order_by(Document.created_at.desc()).first()
+            
+            if not document:
+                logger.error("submission_document_not_found", submission_id=submission_id)
+                raise ValueError("Submission document not found")
+            
+            # Check if document is fully processed
+            if document.parse_status != ParseStatus.SUCCESS:
+                if document.parse_status == ParseStatus.FAILED:
+                    raise ValueError("Document parsing failed. Cannot evaluate.")
+                else:
+                    # Still processing - retry after 60s
+                    logger.info("document_still_processing", document_id=str(document.id))
+                    raise self.retry(countdown=60, max_retries=5)
+            
+            if not document.parsed_text:
+                raise ValueError("Document has no parsed text")
+            
+            submission_text = document.parsed_text
+            
+            logger.info(
+                "submission_loaded",
+                submission_id=submission_id,
+                assignment_id=str(assignment.id),
+                course_id=str(course_id),
+                text_length=len(submission_text),
+            )
+        
+        # Step 3: Retrieve context
+        chroma_client = ChromaDBClient(settings)
+        chroma_client.connect()
+        
+        retrieval_service = RetrievalService(chroma_client, embedding_service)
+        
+        with get_sync_db() as db:
+            retrieval_result = retrieval_service.retrieve_context(
+                submission_text=submission_text,
+                assignment_id=assignment.id,
+                course_id=course_id,
+                db_session=db,
+            )
+        
+        logger.info(
+            "context_retrieved",
+            rubric_chunks=len(retrieval_result.rubric_chunks),
+            notes_chunks=len(retrieval_result.notes_chunks),
+            sample_chunks=len(retrieval_result.sample_chunks),
+        )
+        
+        # Step 4: Evaluate with AI
+        evaluator = GradingEvaluator(settings)
+        
+        evaluation_result = evaluator.evaluate(
+            submission_text=submission_text,
+            rubrics=rubrics,
+            retrieval_result=retrieval_result,
+            assignment=assignment,
+        )
+        
+        logger.info(
+            "ai_evaluation_completed",
+            submission_id=submission_id,
+            total_score=evaluation_result.total_score,
+            confidence=evaluation_result.confidence_score,
+        )
+        
+        # Step 5: Store evaluation in database
+        with get_sync_db() as db:
+            # Check if evaluation already exists
+            existing_eval = db.query(Evaluation).filter(
+                Evaluation.submission_id == uuid.UUID(submission_id)
+            ).first()
+            
+            if existing_eval:
+                # Update existing evaluation
+                existing_eval.ai_score = Decimal(str(evaluation_result.total_score))
+                existing_eval.ai_feedback = {
+                    "criteria_scores": evaluation_result.criteria_scores,
+                    "percentage": evaluation_result.percentage,
+                    "confidence_score": evaluation_result.confidence_score,
+                }
+                existing_eval.strengths = evaluation_result.strengths
+                existing_eval.weaknesses = evaluation_result.weaknesses
+                existing_eval.missing_topics = evaluation_result.missing_topics
+                existing_eval.retrieved_chunks = [
+                    {
+                        "chunk_text": chunk.chunk_text,
+                        "document_id": chunk.document_id,
+                        "doc_type": chunk.doc_type,
+                        "relevance_score": chunk.relevance_score,
+                        "source_name": chunk.source_name,
+                    }
+                    for chunk in (
+                        retrieval_result.rubric_chunks +
+                        retrieval_result.notes_chunks +
+                        retrieval_result.sample_chunks
+                    )
+                ]
+                existing_eval.evaluated_at = datetime.utcnow()
+                
+                logger.info("evaluation_updated", evaluation_id=str(existing_eval.id))
+            else:
+                # Create new evaluation
+                evaluation = Evaluation(
+                    submission_id=uuid.UUID(submission_id),
+                    ai_score=Decimal(str(evaluation_result.total_score)),
+                    ai_feedback={
+                        "criteria_scores": evaluation_result.criteria_scores,
+                        "percentage": evaluation_result.percentage,
+                        "confidence_score": evaluation_result.confidence_score,
+                    },
+                    strengths=evaluation_result.strengths,
+                    weaknesses=evaluation_result.weaknesses,
+                    missing_topics=evaluation_result.missing_topics,
+                    retrieved_chunks=[
+                        {
+                            "chunk_text": chunk.chunk_text,
+                            "document_id": chunk.document_id,
+                            "doc_type": chunk.doc_type,
+                            "relevance_score": chunk.relevance_score,
+                            "source_name": chunk.source_name,
+                        }
+                        for chunk in (
+                            retrieval_result.rubric_chunks +
+                            retrieval_result.notes_chunks +
+                            retrieval_result.sample_chunks
+                        )
+                    ],
+                    evaluated_at=datetime.utcnow(),
+                )
+                
+                db.add(evaluation)
+                db.flush()
+                
+                logger.info("evaluation_created", evaluation_id=str(evaluation.id))
+            
+            # Step 6: Update submission status
+            submission = db.query(Submission).filter(
+                Submission.id == uuid.UUID(submission_id)
+            ).first()
+            submission.status = SubmissionStatus.EVALUATED
+            
+            db.commit()
+        
+        logger.info("evaluate_submission_completed", submission_id=submission_id)
+        
+        return {
+            "submission_id": submission_id,
+            "status": "evaluated",
+            "total_score": evaluation_result.total_score,
+            "confidence_score": evaluation_result.confidence_score,
+        }
+        
+    except Exception as exc:
+        logger.error(
+            "evaluate_submission_failed",
+            submission_id=submission_id,
+            error=str(exc),
+            attempt=self.request.retries + 1,
+        )
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            countdown = 60 * (2 ** self.request.retries)  # 60s, 120s, 240s
+            logger.info("retrying_evaluation", countdown=countdown)
+            raise self.retry(exc=exc, countdown=countdown)
+        else:
+            logger.error("max_retries_exceeded_evaluation", submission_id=submission_id)
+            raise
+
+
 @celery_app.task(name="gradeai.process_document", bind=True, max_retries=3)
 def process_document(self, document_id: str) -> dict:
     """
