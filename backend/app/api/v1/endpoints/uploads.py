@@ -177,6 +177,7 @@ async def confirm_upload(
         doc_type=payload.doc_type,
         file_name=payload.file_name,
         file_url=file_url,
+        file_key=payload.file_key,
         mime_type=mime_type,
         file_size_bytes=payload.file_size_bytes,
         parse_status=ParseStatus.PENDING,

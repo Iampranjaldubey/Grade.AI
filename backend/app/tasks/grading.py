@@ -311,7 +311,7 @@ def process_document(self, document_id: str) -> dict:
             db.commit()
             
             # Extract file info
-            file_key = _extract_file_key_from_url(document.file_url)
+            file_key = document.file_key
             mime_type = document.mime_type
             course_id = document.course_id
             assignment_id = document.assignment_id

@@ -47,6 +47,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     file_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    file_key: Mapped[str] = mapped_column(String(1024), nullable=False, default="", server_default="")
     mime_type: Mapped[str] = mapped_column(String(127), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     parsed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
