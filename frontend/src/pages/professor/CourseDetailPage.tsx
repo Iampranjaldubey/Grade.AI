@@ -634,7 +634,7 @@ function DocumentSection({
 }) {
   const [showUpload, setShowUpload] = useState(false);
 
-  const handleUploadSuccess = () => {
+  const handleUploadSuccess = (_documentId: string, _fileKey: string, _fileSizeBytes: number) => {
     setShowUpload(false);
     onUploadEnd();
   };

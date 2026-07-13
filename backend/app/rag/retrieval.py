@@ -107,13 +107,16 @@ class RetrievalService:
         query_embedding = self.embeddings.embed_single(submission_text)
         
         # Retrieve rubric chunks (all chunks, rubric must be complete)
+        # ChromaDB requires $and operator for multiple conditions
         rubric_chunks = self._query_collection(
             collection_name=collection_name,
             query_embedding=query_embedding,
             n_results=50,  # Get all rubric chunks
             where_filter={
-                "doc_type": DocumentType.RUBRIC.value,
-                "assignment_id": str(assignment_id),
+                "$and": [
+                    {"doc_type": DocumentType.RUBRIC.value},
+                    {"assignment_id": str(assignment_id)},
+                ]
             },
             db_session=db_session,
         )
@@ -130,13 +133,16 @@ class RetrievalService:
         )
         
         # Retrieve sample solution chunks (top 3 most relevant)
+        # ChromaDB requires $and operator for multiple conditions
         sample_chunks = self._query_collection(
             collection_name=collection_name,
             query_embedding=query_embedding,
             n_results=3,
             where_filter={
-                "doc_type": DocumentType.SAMPLE_SOLUTION.value,
-                "assignment_id": str(assignment_id),
+                "$and": [
+                    {"doc_type": DocumentType.SAMPLE_SOLUTION.value},
+                    {"assignment_id": str(assignment_id)},
+                ]
             },
             db_session=db_session,
         )

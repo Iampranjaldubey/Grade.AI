@@ -28,6 +28,18 @@ from app.tasks.grading import process_document
 router = APIRouter()
 
 
+def _get_mime_type(file_name: str) -> str:
+    """Determine MIME type from file extension."""
+    name = file_name.lower()
+    if name.endswith(".pdf"):
+        return "application/pdf"
+    elif name.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif name.endswith(".txt"):
+        return "text/plain"
+    return "application/octet-stream"
+
+
 @router.post(
     "",
     response_model=SubmissionOut,
@@ -41,7 +53,7 @@ async def create_submission(
     settings: Settings = Depends(get_settings),
 ) -> SubmissionOut:
     """Submit an assignment (student only)."""
-    
+
     # Fetch assignment with course
     assignment_result = await db.execute(
         select(Assignment)
@@ -49,13 +61,13 @@ async def create_submission(
         .where(Assignment.id == payload.assignment_id)
     )
     assignment = assignment_result.scalar_one_or_none()
-    
+
     if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found",
         )
-    
+
     # Verify student is enrolled in the course
     enrollment_result = await db.execute(
         select(Enrollment).where(
@@ -69,15 +81,14 @@ async def create_submission(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not enrolled in this course",
         )
-    
+
     # Check if assignment due date has passed
     now = datetime.now(timezone.utc)
     if assignment.due_date < now:
-        # Allow submission but mark as late
         submission_status = SubmissionStatus.LATE
     else:
         submission_status = SubmissionStatus.SUBMITTED
-    
+
     # Verify file exists in S3
     s3_service = get_s3_service(settings)
     if not s3_service.file_exists(payload.file_key):
@@ -85,10 +96,10 @@ async def create_submission(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found in storage. Please upload the file first.",
         )
-    
+
     # Generate download URL
     file_url = s3_service.generate_presigned_download_url(payload.file_key, expires=86400)
-    
+
     # Check if existing submission exists
     existing_result = await db.execute(
         select(Submission).where(
@@ -97,7 +108,7 @@ async def create_submission(
         )
     )
     existing_submission = existing_result.scalar_one_or_none()
-    
+
     if existing_submission:
         # Update existing submission
         existing_submission.file_url = file_url
@@ -119,7 +130,7 @@ async def create_submission(
         db.add(submission)
         await db.commit()
         await db.refresh(submission)
-    
+
     # Create Document record for the submission
     document = Document(
         course_id=assignment.course_id,
@@ -128,14 +139,15 @@ async def create_submission(
         doc_type=DocumentType.SUBMISSION,
         file_name=payload.file_name,
         file_url=file_url,
-        mime_type="application/pdf",  # Assume PDF for now
+        file_key=payload.file_key,                   # fixed: was missing entirely
+        mime_type=_get_mime_type(payload.file_name),  # fixed: was hardcoded to application/pdf
         file_size_bytes=payload.file_size_bytes,
         parse_status=ParseStatus.PENDING,
     )
     db.add(document)
     await db.commit()
     await db.refresh(document)
-    
+
     # Trigger document processing
     try:
         process_document.delay(str(document.id))
@@ -147,7 +159,23 @@ async def create_submission(
             document_id=str(document.id),
             error=str(exc),
         )
-    
+
+    # Trigger AI evaluation after document processing completes
+    try:
+        from app.tasks.grading import evaluate_submission
+        evaluate_submission.apply_async(
+            args=[str(submission.id)],
+            countdown=15,  # wait 15s for document processing to complete first
+        )
+    except Exception as exc:
+        import structlog
+        logger = structlog.get_logger(__name__)
+        logger.error(
+            "failed_to_queue_evaluation",
+            submission_id=str(submission.id),
+            error=str(exc),
+        )
+
     return SubmissionOut.model_validate(submission)
 
 
@@ -162,19 +190,18 @@ async def get_my_submission(
     db: AsyncSession = Depends(get_db),
 ) -> SubmissionOut:
     """Get the student's own submission for an assignment."""
-    
-    # Verify assignment exists and student is enrolled
+
     assignment_result = await db.execute(
         select(Assignment).where(Assignment.id == assignment_id)
     )
     assignment = assignment_result.scalar_one_or_none()
-    
+
     if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found",
         )
-    
+
     # Verify student is enrolled
     enrollment_result = await db.execute(
         select(Enrollment).where(
@@ -188,8 +215,7 @@ async def get_my_submission(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not enrolled in this course",
         )
-    
-    # Fetch submission
+
     submission_result = await db.execute(
         select(Submission).where(
             Submission.assignment_id == assignment_id,
@@ -197,13 +223,13 @@ async def get_my_submission(
         )
     )
     submission = submission_result.scalar_one_or_none()
-    
+
     if not submission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No submission found for this assignment",
         )
-    
+
     return SubmissionOut.model_validate(submission)
 
 
@@ -218,8 +244,7 @@ async def get_all_submissions(
     db: AsyncSession = Depends(get_db),
 ) -> List[SubmissionWithStudent]:
     """Get all submissions for an assignment (professor only)."""
-    
-    # Fetch assignment and verify professor owns the course
+
     assignment_result = await db.execute(
         select(Assignment)
         .join(Course, Assignment.course_id == Course.id)
@@ -229,14 +254,13 @@ async def get_all_submissions(
         )
     )
     assignment = assignment_result.scalar_one_or_none()
-    
+
     if not assignment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found or you do not own the course",
         )
-    
-    # Fetch all submissions with student info
+
     result = await db.execute(
         select(Submission, User, Evaluation)
         .join(User, Submission.student_id == User.id)
@@ -244,9 +268,9 @@ async def get_all_submissions(
         .where(Submission.assignment_id == assignment_id)
         .order_by(Submission.submitted_at.desc())
     )
-    
+
     rows = result.all()
-    
+
     submissions_with_students = []
     for submission, user, evaluation in rows:
         submissions_with_students.append(
@@ -263,5 +287,5 @@ async def get_all_submissions(
                 has_evaluation=evaluation is not None,
             )
         )
-    
+
     return submissions_with_students

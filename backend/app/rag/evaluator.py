@@ -390,19 +390,27 @@ Return JSON only:
         retrieval_result: RetrievalResult,
     ) -> EvaluationResult:
         """Create a fallback evaluation when AI fails."""
+        from decimal import Decimal
+        
         logger.warning("creating_fallback_evaluation")
         
         # Award 50% of points as placeholder
         criteria_scores = []
         for rubric in rubrics:
+            # Convert Decimal to float to avoid type errors
+            max_points_float = float(rubric.max_points)
+            awarded_points = max_points_float * 0.5
+            
             criteria_scores.append({
                 "criterion_name": rubric.criteria_name,
-                "awarded": rubric.max_points * 0.5,
-                "max": rubric.max_points,
+                "awarded": awarded_points,
+                "max": max_points_float,
                 "reasoning": "Automatic evaluation failed. Manual grading required.",
             })
         
-        total_score = assignment.max_score * 0.5
+        # Convert assignment max_score to float
+        max_score_float = float(assignment.max_score)
+        total_score = max_score_float * 0.5
         
         sources = list(set(
             chunk.source_name
@@ -416,7 +424,7 @@ Return JSON only:
         
         return EvaluationResult(
             total_score=total_score,
-            max_score=assignment.max_score,
+            max_score=max_score_float,
             percentage=50.0,
             criteria_scores=criteria_scores,
             strengths=["Submission received"],

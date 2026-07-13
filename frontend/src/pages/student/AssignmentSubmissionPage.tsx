@@ -28,6 +28,8 @@ export function AssignmentSubmissionPage() {
   const queryClient = useQueryClient();
   const [isResubmitting, setIsResubmitting] = useState(false);
   const [uploadedDocumentId, setUploadedDocumentId] = useState<string | null>(null);
+  const [uploadedFileKey, setUploadedFileKey] = useState<string | null>(null);
+  const [uploadedFileSize, setUploadedFileSize] = useState<number>(0);
   const [expandedCriteria, setExpandedCriteria] = useState<Set<number>>(new Set());
 
   const { data: assignment, isLoading: assignmentLoading } = useQuery({
@@ -80,6 +82,8 @@ export function AssignmentSubmissionPage() {
       toast.success("Assignment submitted successfully!");
       queryClient.invalidateQueries({ queryKey: ["mySubmission", assignmentId] });
       setUploadedDocumentId(null);
+      setUploadedFileKey(null);
+      setUploadedFileSize(0);
       setIsResubmitting(false);
     },
     onError: (error: { response?: { data?: { detail?: string } } }) => {
@@ -88,12 +92,14 @@ export function AssignmentSubmissionPage() {
     },
   });
 
-  const handleUploadSuccess = (documentId: string) => {
+  const handleUploadSuccess = (documentId: string, fileKey: string, fileSizeBytes: number) => {
     setUploadedDocumentId(documentId);
+    setUploadedFileKey(fileKey);
+    setUploadedFileSize(fileSizeBytes);
   };
 
   const handleSubmit = async () => {
-    if (!uploadedDocumentId || !document) {
+    if (!uploadedDocumentId || !document || !uploadedFileKey || !uploadedFileSize) {
       toast.error("Please upload a file first");
       return;
     }
@@ -103,14 +109,11 @@ export function AssignmentSubmissionPage() {
       return;
     }
 
-    // Get document details to extract file_key from file_url
-    const fileKey = document.file_name; // Simplified - in production, extract from file_url
-    
     submitMutation.mutate({
       assignment_id: assignmentId!,
       file_name: document.file_name,
-      file_key: fileKey,
-      file_size_bytes: 0, // We don't have this from status endpoint
+      file_key: uploadedFileKey,
+      file_size_bytes: uploadedFileSize,
     });
   };
 

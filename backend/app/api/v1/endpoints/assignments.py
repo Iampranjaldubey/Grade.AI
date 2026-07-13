@@ -143,12 +143,38 @@ async def list_assignments(
     course_id: uuid.UUID = Query(...),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
-    professor: User = Depends(get_current_professor),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[AssignmentListOut]:
-    await _get_professor_course(course_id, professor, db)
-    offset = (page - 1) * size
+    from app.core.enums import UserRole  # avoid circular at module level
 
+    # Verify the course exists and the user has access to it
+    course_result = await db.execute(select(Course).where(Course.id == course_id))
+    course = course_result.scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+
+    if current_user.role == UserRole.PROFESSOR:
+        if course.professor_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not own this course",
+            )
+    else:
+        enrollment_check = await db.execute(
+            select(Enrollment).where(
+                Enrollment.course_id == course_id,
+                Enrollment.student_id == current_user.id,
+                Enrollment.status == EnrollmentStatus.ACTIVE,
+            )
+        )
+        if enrollment_check.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not enrolled in this course",
+            )
+
+    offset = (page - 1) * size
     result = await db.execute(
         select(Assignment)
         .where(Assignment.course_id == course_id, Assignment.is_active.is_(True))
@@ -158,7 +184,6 @@ async def list_assignments(
     )
     assignments = result.scalars().all()
     return [await _assignment_with_submission_count(db, a) for a in assignments]
-
 
 @router.get(
     "/{assignment_id}",

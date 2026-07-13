@@ -11,7 +11,7 @@ interface DocumentUploadZoneProps {
   docType: DocumentType;
   courseId: string;
   assignmentId?: string;
-  onSuccess?: (documentId: string) => void;
+  onSuccess?: (documentId: string, fileKey: string, fileSizeBytes: number) => void;
   onError?: (error: Error) => void;
 }
 
@@ -81,7 +81,7 @@ export function DocumentUploadZone({
   };
 
   const pollDocumentStatus = useCallback(
-    async (docId: string) => {
+    async (docId: string, fileKey: string, fileSizeBytes: number) => {
       try {
         const status = await uploadsApi.getStatus(docId);
 
@@ -93,7 +93,8 @@ export function DocumentUploadZone({
             pollIntervalRef.current = null;
           }
           toast.success("Document processed successfully!");
-          onSuccess?.(docId);
+          // Pass the parameters directly - no reading from state
+          onSuccess?.(docId, fileKey, fileSizeBytes);
         } else if (status.parse_status === "failed") {
           setState("failed");
           if (pollIntervalRef.current) {
@@ -173,8 +174,12 @@ export function DocumentUploadZone({
       setProgress(95);
 
       // Step 4: Poll for processing status
+      // Capture values in local variables to avoid stale closure bug
+      const fileKey = presignResponse.file_key;
+      const fileSizeBytes = selectedFile.size;
+      
       pollIntervalRef.current = window.setInterval(() => {
-        pollDocumentStatus(document.id);
+        pollDocumentStatus(document.id, fileKey, fileSizeBytes);
       }, 2000);
     } catch (error) {
       console.error("Upload error:", error);

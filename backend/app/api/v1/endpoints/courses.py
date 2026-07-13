@@ -154,10 +154,33 @@ async def list_courses(
 )
 async def get_course(
     course_id: uuid.UUID,
-    professor: User = Depends(get_current_professor),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CourseListOut:
-    course = await _get_professor_course(course_id, professor, db)
+    result = await db.execute(select(Course).where(Course.id == course_id))
+    course = result.scalar_one_or_none()
+
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+
+    # Professor must own the course
+    if current_user.role == "professor":
+        if course.professor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
+    # Student must be actively enrolled
+    elif current_user.role == "student":
+        enrollment = await db.execute(
+            select(Enrollment).where(
+                Enrollment.course_id == course_id,
+                Enrollment.student_id == current_user.id,
+                Enrollment.status == EnrollmentStatus.ACTIVE,
+            )
+        )
+        if enrollment.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course")
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
     return await _course_with_counts(db, course)
 
 
