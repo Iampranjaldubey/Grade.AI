@@ -161,19 +161,32 @@ async def create_submission(
         )
 
     # Trigger AI evaluation after document processing completes
-    try:
-        from app.tasks.grading import evaluate_submission
-        evaluate_submission.apply_async(
-            args=[str(submission.id)],
-            countdown=15,  # wait 15s for document processing to complete first
-        )
-    except Exception as exc:
+    # Only queue AI evaluation for auto and hybrid modes, skip for manual
+    from app.core.enums import GradingMode
+    
+    if assignment.grading_mode in [GradingMode.AUTO, GradingMode.HYBRID]:
+        try:
+            from app.tasks.grading import evaluate_submission
+            evaluate_submission.apply_async(
+                args=[str(submission.id)],
+                countdown=15,  # wait 15s for document processing to complete first
+            )
+        except Exception as exc:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.error(
+                "failed_to_queue_evaluation",
+                submission_id=str(submission.id),
+                error=str(exc),
+            )
+    else:
+        # Manual mode - professor will grade without AI assistance
         import structlog
         logger = structlog.get_logger(__name__)
-        logger.error(
-            "failed_to_queue_evaluation",
+        logger.info(
+            "skipped_ai_evaluation_manual_mode",
             submission_id=str(submission.id),
-            error=str(exc),
+            grading_mode=assignment.grading_mode.value,
         )
 
     return SubmissionOut.model_validate(submission)

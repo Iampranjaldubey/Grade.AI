@@ -23,7 +23,7 @@ class EvaluationOut(BaseModel):
     """Complete evaluation response."""
     id: UUID
     submission_id: UUID
-    ai_score: Decimal
+    ai_score: Optional[Decimal] = None
     final_score: Optional[Decimal] = None
     ai_feedback: Optional[dict[str, Any]] = None
     professor_feedback: Optional[str] = None
@@ -62,7 +62,7 @@ class EvaluationListOut(BaseModel):
     """Evaluation list item for professor's pending reviews."""
     id: UUID
     submission_id: UUID
-    ai_score: Decimal
+    ai_score: Optional[Decimal] = None
     approval_status: ApprovalStatus
     evaluated_at: datetime
     confidence_score: float
@@ -96,6 +96,24 @@ class OverrideEvaluationRequest(BaseModel):
     criteria_overrides: Optional[list[dict[str, Any]]] = Field(
         default=None,
         description="Optional per-criterion score adjustments",
+    )
+
+
+class ManualEvaluationCreate(BaseModel):
+    """Request to create a manual evaluation (no AI)."""
+    final_score: Decimal = Field(
+        ...,
+        gt=0,
+        description="Final score determined by professor",
+    )
+    professor_feedback: str = Field(
+        ...,
+        min_length=1,
+        description="Required feedback for manual grading",
+    )
+    criteria_scores: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="Optional per-criterion score breakdown",
     )
 
 

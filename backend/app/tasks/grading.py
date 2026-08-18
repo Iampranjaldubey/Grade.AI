@@ -8,7 +8,7 @@ import structlog
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
-from app.core.enums import ParseStatus
+from app.core.enums import ApprovalStatus, GradingMode, ParseStatus
 from app.db.sync_session import get_sync_db
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.document import Document
@@ -168,12 +168,31 @@ def evaluate_submission(self, submission_id: str) -> dict:
         
         # Step 5: Store evaluation in database
         with get_sync_db() as db:
+            # Re-load assignment to access grading_mode
+            assignment_obj = db.query(Assignment).filter(
+                Assignment.id == assignment.id
+            ).first()
+            
             # Check if evaluation already exists
             existing_eval = db.query(Evaluation).filter(
                 Evaluation.submission_id == uuid.UUID(submission_id)
             ).first()
             
             if existing_eval:
+                # Guard against overwriting manual evaluations
+                if existing_eval.ai_score is None:
+                    logger.warning(
+                        "skipped_ai_overwrite_of_manual_evaluation",
+                        evaluation_id=str(existing_eval.id),
+                        submission_id=submission_id,
+                    )
+                    # Manual evaluation exists - do not overwrite with AI
+                    return {
+                        "submission_id": submission_id,
+                        "status": "skipped",
+                        "reason": "manual_evaluation_exists",
+                    }
+                
                 # Update existing evaluation
                 existing_eval.ai_score = Decimal(str(evaluation_result.total_score))
                 existing_eval.ai_feedback = {
@@ -199,6 +218,19 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     )
                 ]
                 existing_eval.evaluated_at = datetime.utcnow()
+                
+                # Auto-approve if grading mode is AUTO
+                if assignment_obj.grading_mode == GradingMode.AUTO:
+                    existing_eval.approval_status = ApprovalStatus.APPROVED
+                    existing_eval.final_score = existing_eval.ai_score
+                    existing_eval.approved_at = datetime.utcnow()
+                    # approved_by left as NULL for system auto-approvals
+                    
+                    logger.info(
+                        "evaluation_auto_approved",
+                        evaluation_id=str(existing_eval.id),
+                        grading_mode=assignment_obj.grading_mode.value,
+                    )
                 
                 logger.info("evaluation_updated", evaluation_id=str(existing_eval.id))
             else:
@@ -231,8 +263,23 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     evaluated_at=datetime.utcnow(),
                 )
                 
+                # Auto-approve if grading mode is AUTO
+                if assignment_obj.grading_mode == GradingMode.AUTO:
+                    evaluation.approval_status = ApprovalStatus.APPROVED
+                    evaluation.final_score = evaluation.ai_score
+                    evaluation.approved_at = datetime.utcnow()
+                    # approved_by left as NULL for system auto-approvals
+                
                 db.add(evaluation)
                 db.flush()
+                
+                # Log after flush so we have evaluation.id
+                if assignment_obj.grading_mode == GradingMode.AUTO:
+                    logger.info(
+                        "evaluation_auto_approved",
+                        evaluation_id=str(evaluation.id),
+                        grading_mode=assignment_obj.grading_mode.value,
+                    )
                 
                 logger.info("evaluation_created", evaluation_id=str(evaluation.id))
             
@@ -347,13 +394,16 @@ def process_document(self, document_id: str) -> dict:
             raise ValueError("Extracted text is empty or too short")
         
         # Step 4: Update document with parsed text
+        # Sanitize text: Remove NULL bytes that PostgreSQL cannot store
+        sanitized_text = extracted_text.replace('\x00', '')
+        
         with get_sync_db() as db:
             document = db.query(Document).filter(Document.id == uuid.UUID(document_id)).first()
-            document.parsed_text = extracted_text
+            document.parsed_text = sanitized_text
             db.commit()
         
-        # Step 5: Chunk the text
-        chunks = chunk_text(extracted_text, chunk_size=500, overlap=50)
+        # Step 5: Chunk the text (use sanitized text)
+        chunks = chunk_text(sanitized_text, chunk_size=500, overlap=50)
         
         if not chunks:
             logger.warning("no_chunks_created", document_id=document_id)

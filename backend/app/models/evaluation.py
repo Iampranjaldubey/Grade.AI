@@ -31,7 +31,7 @@ class Evaluation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         unique=True,
         index=True,
     )
-    ai_score: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    ai_score: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     final_score: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     ai_feedback: Mapped[dict[str, Any] | None] = mapped_column(FlexibleJSON, nullable=True)
     professor_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)

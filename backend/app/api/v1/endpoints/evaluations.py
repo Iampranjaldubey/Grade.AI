@@ -27,6 +27,7 @@ from app.schemas.evaluation import (
     ApproveEvaluationRequest,
     EvaluationListOut,
     EvaluationOut,
+    ManualEvaluationCreate,
     OverrideEvaluationRequest,
     StudentEvaluationOut,
 )
@@ -184,6 +185,13 @@ async def approve_evaluation(
             detail=f"Evaluation already {evaluation.approval_status.value}",
         )
     
+    # Cannot approve evaluation without AI score
+    if evaluation.ai_score is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot approve evaluation without AI score. Use /override to set a manual score.",
+        )
+    
     # Approve evaluation
     evaluation.approval_status = ApprovalStatus.APPROVED
     evaluation.final_score = evaluation.ai_score
@@ -283,7 +291,99 @@ async def override_evaluation(
         "evaluation_overridden",
         evaluation_id=str(evaluation_id),
         professor_id=str(current_user.id),
-        ai_score=float(evaluation.ai_score),
+        ai_score=float(evaluation.ai_score) if evaluation.ai_score is not None else None,
+        final_score=float(evaluation.final_score),
+    )
+    
+    return EvaluationOut.model_validate(evaluation)
+
+
+@router.post("/manual/{submission_id}", response_model=EvaluationOut)
+async def create_manual_evaluation(
+    submission_id: uuid.UUID,
+    request: ManualEvaluationCreate,
+    current_user: User = Depends(require_professor),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationOut:
+    """
+    Create a manual evaluation for a submission without AI grading.
+    Used for manual-mode assignments or when professor wants to grade manually.
+    
+    Professor only.
+    """
+    # Load submission
+    query = (
+        select(Submission)
+        .where(Submission.id == submission_id)
+        .options(joinedload(Submission.assignment).joinedload(Assignment.course))
+    )
+    
+    result = await db.execute(query)
+    submission = result.scalar_one_or_none()
+    
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    
+    # Verify professor owns the course
+    course = submission.assignment.course
+    assignment = submission.assignment
+    
+    if course.professor_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to grade this submission",
+        )
+    
+    # Validate final_score doesn't exceed max_score
+    if request.final_score > assignment.max_score:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Final score ({request.final_score}) exceeds assignment max score ({assignment.max_score})",
+        )
+    
+    # Check if evaluation already exists
+    existing_eval_query = select(Evaluation).where(
+        Evaluation.submission_id == submission_id
+    )
+    existing_eval_result = await db.execute(existing_eval_query)
+    existing_eval = existing_eval_result.scalar_one_or_none()
+    
+    if existing_eval:
+        raise HTTPException(
+            status_code=409,
+            detail="Evaluation already exists for this submission. Use /override endpoint to modify it.",
+        )
+    
+    # Create manual evaluation
+    evaluation = Evaluation(
+        submission_id=submission_id,
+        ai_score=None,  # Manual evaluation - no AI score
+        final_score=request.final_score,
+        professor_feedback=request.professor_feedback,
+        ai_feedback={"criteria_scores": request.criteria_scores} if request.criteria_scores else None,
+        approval_status=ApprovalStatus.OVERRIDDEN,  # Manual grade is inherently "overridden" (not AI)
+        approved_by=current_user.id,
+        approved_at=datetime.utcnow(),
+        evaluated_at=datetime.utcnow(),
+        strengths=None,
+        weaknesses=None,
+        missing_topics=None,
+        retrieved_chunks=None,
+    )
+    
+    db.add(evaluation)
+    
+    # Update submission status
+    submission.status = SubmissionStatus.EVALUATED
+    
+    await db.commit()
+    await db.refresh(evaluation)
+    
+    logger.info(
+        "manual_evaluation_created",
+        evaluation_id=str(evaluation.id),
+        submission_id=str(submission_id),
+        professor_id=str(current_user.id),
         final_score=float(evaluation.final_score),
     )
     
