@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -321,6 +322,20 @@ async def create_rubrics(
     db: AsyncSession = Depends(get_db),
 ) -> List[RubricOut]:
     assignment = await _get_assignment_with_ownership(assignment_id, professor, db)
+
+    # Validate the rubric criteria's max_points sum to the assignment's max_score.
+    # (Weight-sum == 100 is validated in the schema; this cross-field check needs
+    # the assignment and so lives here.) Without it, per-criterion max_points fed
+    # to the grader can be inconsistent with the max_score used for percentages.
+    total_points = sum((c.max_points for c in payload.criteria), Decimal("0"))
+    if abs(total_points - assignment.max_score) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Rubric max_points must sum to the assignment max_score "
+                f"({assignment.max_score}); got {total_points}."
+            ),
+        )
 
     # Delete existing rubrics
     existing = await db.execute(
