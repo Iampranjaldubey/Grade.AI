@@ -1,10 +1,12 @@
 import random
 import string
 import uuid
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db, get_current_professor, get_current_student
@@ -108,20 +110,32 @@ async def create_course(
             detail=f"You already have a course with code '{payload.course_code}'",
         )
 
-    join_code = await _unique_join_code(db)
+    # The join_code uniqueness SELECT is a check-then-act, so a concurrent create
+    # could still collide at INSERT. Retry with a fresh code on IntegrityError
+    # instead of surfacing a raw 500; the DB unique constraint is the real guard.
+    for _ in range(5):
+        join_code = await _unique_join_code(db)
+        course = Course(
+            course_name=payload.course_name,
+            course_code=payload.course_code,
+            join_code=join_code,
+            professor_id=professor.id,
+            semester=payload.semester,
+            description=payload.description,
+        )
+        db.add(course)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            continue
+        await db.refresh(course)
+        return await _course_with_counts(db, course)
 
-    course = Course(
-        course_name=payload.course_name,
-        course_code=payload.course_code,
-        join_code=join_code,
-        professor_id=professor.id,
-        semester=payload.semester,
-        description=payload.description,
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Could not create course due to a code collision. Please try again.",
     )
-    db.add(course)
-    await db.commit()
-    await db.refresh(course)
-    return await _course_with_counts(db, course)
 
 
 @router.get(
@@ -353,8 +367,10 @@ async def join_course(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="You are already enrolled in this course",
             )
-        # Re-activate a previously dropped enrollment
+        # Re-activate a previously dropped enrollment. Reset enrolled_at so
+        # "time enrolled" reflects the current (re)join, not the original one.
         existing_enrollment.status = EnrollmentStatus.ACTIVE
+        existing_enrollment.enrolled_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(existing_enrollment)
         await db.refresh(course)
