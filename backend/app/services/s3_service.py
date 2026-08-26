@@ -132,6 +132,22 @@ class S3Service:
             logger.error("s3_file_exists_check_failed", key=file_key, error=str(exc))
             return False
 
+    def get_file_size(self, file_key: str) -> int | None:
+        """
+        Return the actual size in bytes of an object in S3/MinIO, or None if the
+        object does not exist / cannot be inspected. Used to enforce upload size
+        limits against the real stored file rather than a client-supplied value.
+        """
+        try:
+            response = self._client.head_object(Bucket=self.bucket, Key=file_key)
+            return int(response["ContentLength"])
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code == "404":
+                return None
+            logger.error("s3_file_size_check_failed", key=file_key, error=str(exc))
+            return None
+
 
 def get_s3_service(settings: Settings) -> S3Service:
     """Dependency for FastAPI endpoints."""

@@ -90,6 +90,17 @@ async def presign_upload(
             detail=f"Content type not allowed. Allowed types: {', '.join(ALLOWED_CONTENT_TYPES)}",
         )
     
+    # Fast-fail on client-declared oversized uploads before issuing a URL.
+    # (Authoritative enforcement happens against the actual object at confirm time.)
+    if (
+        payload.file_size_bytes is not None
+        and payload.file_size_bytes > settings.max_upload_size_bytes
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum allowed size of {settings.max_upload_size_bytes} bytes",
+        )
+    
     # Verify course access
     await _verify_course_access(payload.course_id, current_user, db)
     
@@ -155,6 +166,16 @@ async def confirm_upload(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found in storage. Please upload the file first.",
+        )
+    
+    # Enforce size limit against the ACTUAL stored object (not the client-declared
+    # value). Delete the oversized object so it can't be picked up later.
+    actual_size = s3_service.get_file_size(payload.file_key)
+    if actual_size is not None and actual_size > settings.max_upload_size_bytes:
+        s3_service.delete_file(payload.file_key)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum allowed size of {settings.max_upload_size_bytes} bytes",
         )
     
     # Determine MIME type from file name

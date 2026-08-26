@@ -97,6 +97,16 @@ async def create_submission(
             detail="File not found in storage. Please upload the file first.",
         )
 
+    # Enforce size limit against the actual stored object to protect the worker
+    # from OOM on oversized submissions. Remove the oversized object.
+    actual_size = s3_service.get_file_size(payload.file_key)
+    if actual_size is not None and actual_size > settings.max_upload_size_bytes:
+        s3_service.delete_file(payload.file_key)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum allowed size of {settings.max_upload_size_bytes} bytes",
+        )
+
     # Generate download URL
     file_url = s3_service.generate_presigned_download_url(payload.file_key, expires=86400)
 

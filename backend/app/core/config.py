@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     aws_s3_endpoint: str | None = Field(default=None, alias="AWS_S3_ENDPOINT")
     aws_endpoint_url: str | None = Field(default=None, alias="AWS_ENDPOINT_URL")
 
+    # Hard cap on uploaded file size (bytes). Enforced against the ACTUAL object
+    # size in storage at confirm/submit time, not just the client-declared value.
+    # Default 25 MiB. Guards Celery workers from OOM on oversized documents.
+    max_upload_size_bytes: int = Field(default=26214400, alias="MAX_UPLOAD_SIZE_BYTES")
+
     celery_broker_url: str = Field(
         default="redis://localhost:6379/1",
         alias="CELERY_BROKER_URL",

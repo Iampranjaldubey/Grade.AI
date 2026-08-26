@@ -13,6 +13,9 @@ class PresignRequest(BaseModel):
     doc_type: DocumentType
     course_id: uuid.UUID
     assignment_id: Optional[uuid.UUID] = None
+    # Client-declared size for fast-fail before issuing an upload URL. The
+    # authoritative size check happens against the actual object at confirm time.
+    file_size_bytes: Optional[int] = Field(default=None, gt=0)
 
 
 class PresignResponse(BaseModel):
