@@ -22,7 +22,12 @@ from app.schemas.document import (
     PresignResponse,
 )
 from app.services.s3_service import get_s3_service
+from app.infrastructure.chromadb_client import ChromaDBClient
 from app.tasks.grading import process_document
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -307,21 +312,31 @@ async def delete_document(
             detail="Only the course professor can delete documents",
         )
     
-    # Extract file key from file_url
-    file_key = document.file_url.split("?")[0].split("/")[-1]
-    # Reconstruct full key path
-    file_key = f"{document.course_id}/{document.doc_type.value}/{file_key}"
-    
-    # Delete from S3
-    s3_service = get_s3_service(settings)
-    s3_service.delete_file(file_key)
-    
-    # Delete chunks (cascade should handle this, but explicit is safer)
-    await db.execute(
-        select(DocumentChunk).where(DocumentChunk.document_id == document_id)
-    )
-    
-    # Delete document record
+    # Delete the object from S3 using the stored file_key (source of truth).
+    # Older rows may lack a file_key; skip S3 deletion rather than guessing a key.
+    if document.file_key:
+        s3_service = get_s3_service(settings)
+        s3_service.delete_file(document.file_key)
+    else:
+        logger.warning("document_delete_missing_file_key", document_id=str(document_id))
+
+    # Delete this document's embeddings from ChromaDB (best-effort; the vector
+    # store lives outside the DB transaction, so a failure here must not block
+    # the record deletion). Without this, vectors orphan and pollute retrieval.
+    try:
+        chromadb_client = ChromaDBClient(settings)
+        chromadb_client.connect()
+        collection_name = f"gradeai_{document.course_id}"
+        chromadb_client.delete_document_chunks(collection_name, str(document_id))
+    except Exception as exc:
+        logger.warning(
+            "chromadb_cleanup_failed_on_document_delete",
+            document_id=str(document_id),
+            error=str(exc),
+        )
+
+    # Delete document record. DocumentChunk rows are removed by the ON DELETE
+    # CASCADE / relationship cascade on Document.chunks.
     await db.delete(document)
     await db.commit()
 
