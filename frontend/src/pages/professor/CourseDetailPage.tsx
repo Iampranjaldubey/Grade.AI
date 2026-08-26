@@ -547,8 +547,6 @@ function DocumentsTab({
   };
 
   const notesDocuments = documents.filter((doc) => doc.doc_type === "notes");
-  const rubricDocuments = documents.filter((doc) => doc.doc_type === "rubric");
-  const sampleDocuments = documents.filter((doc) => doc.doc_type === "sample_solution");
 
   if (isLoading) {
     return (
@@ -563,7 +561,7 @@ function DocumentsTab({
 
   return (
     <div className="space-y-6">
-      {/* Lecture Notes */}
+      {/* Lecture Notes - Course-level documents only */}
       <DocumentSection
         title="Lecture Notes"
         docType="notes"
@@ -577,38 +575,12 @@ function DocumentsTab({
         }}
         onDelete={handleDelete}
       />
-
-      {/* Rubric Documents */}
-      <DocumentSection
-        title="Rubric Documents"
-        docType="rubric"
-        documents={rubricDocuments}
-        courseId={courseId}
-        isUploading={uploadingSections["rubric"]}
-        onUploadStart={() => setUploadingSections((prev) => ({ ...prev, rubric: true }))}
-        onUploadEnd={() => {
-          setUploadingSections((prev) => ({ ...prev, rubric: false }));
-          onDocumentUploaded();
-        }}
-        onDelete={handleDelete}
-      />
-
-      {/* Sample Solutions */}
-      <DocumentSection
-        title="Sample Solutions"
-        docType="sample_solution"
-        documents={sampleDocuments}
-        courseId={courseId}
-        isUploading={uploadingSections["sample_solution"]}
-        onUploadStart={() =>
-          setUploadingSections((prev) => ({ ...prev, sample_solution: true }))
-        }
-        onUploadEnd={() => {
-          setUploadingSections((prev) => ({ ...prev, sample_solution: false }));
-          onDocumentUploaded();
-        }}
-        onDelete={handleDelete}
-      />
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p className="text-sm text-blue-800">
+          <strong>Note:</strong> Rubric Documents and Sample Solutions are managed per assignment. 
+          Navigate to an assignment to upload assignment-specific documents.
+        </p>
+      </div>
     </div>
   );
 }
@@ -618,6 +590,7 @@ function DocumentSection({
   docType,
   documents,
   courseId,
+  assignmentId,
   isUploading: _isUploading,
   onUploadStart,
   onUploadEnd,
@@ -627,6 +600,7 @@ function DocumentSection({
   docType: import("@/types").DocumentType;
   documents: DocumentOut[];
   courseId: string;
+  assignmentId?: string;
   isUploading: boolean;
   onUploadStart: () => void;
   onUploadEnd: () => void;
@@ -659,6 +633,7 @@ function DocumentSection({
           <DocumentUploadZone
             docType={docType}
             courseId={courseId}
+            assignmentId={assignmentId}
             onSuccess={handleUploadSuccess}
             onError={() => onUploadEnd()}
           />
