@@ -569,7 +569,8 @@ INSERT INTO rubrics VALUES
   - `evaluated`: Evaluation complete
   - `late`: Submitted after `assignment.due_date`
 - Late submissions automatically flagged (checked in `create_submission()`)
-- Each student can submit only once per assignment (resubmissions not supported)
+- One submission row per student per assignment (unique constraint). Resubmitting
+  overwrites that row and re-processes the new file (see Submission Rules below).
 - Deleting assignment or student cascades to submissions
 
 
@@ -1244,10 +1245,12 @@ sequenceDiagram
 
 ### Submission Rules
 
-1. **One Submission Per Student**
+1. **One Submission Row Per Student**
    - Enforced by unique constraint on (`assignment_id`, `student_id`)
-   - Resubmissions not supported (future enhancement)
-   - Students must delete old submission to resubmit (not implemented)
+   - Resubmissions ARE supported: `create_submission()` updates the existing row
+     in place (new file_key/url/name, refreshed `submitted_at`, recomputed status)
+   - On resubmit, the previous submission Document(s), their chunks/vectors, and
+     the prior Evaluation are cleaned up so the new file is graded from scratch
 
 2. **Late Submissions**
    - Automatically flagged by comparing `submitted_at` to `assignment.due_date`

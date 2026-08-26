@@ -175,10 +175,10 @@ api/
 - `chromadb_client.py`: ChromaDB vector database client
 - `redis_client.py`: Redis connection manager (3 databases)
 
-**Redis Databases**:
-- DB 0: Celery task queue and results
-- DB 1: Session management (JWT blacklist, refresh tokens)
-- DB 2: Application cache (planned, not fully used)
+**Redis Databases** (single source of truth: `app/core/config.py`):
+- DB 0: Application use — JWT blacklist, refresh tokens, cache (`REDIS_URL`)
+- DB 1: Celery message broker / task queue (`CELERY_BROKER_URL`)
+- DB 2: Celery result backend (`CELERY_RESULT_BACKEND`)
 
 **ChromaDB Usage**:
 - Collections per assignment: `assignment_{uuid}`
@@ -329,8 +329,8 @@ process_document_task.delay(document_id)  # Async
 **Purpose**: Celery application configuration
 
 **Key Configuration**:
-- Broker: Redis DB 0 (`redis://redis:6379/0`)
-- Backend: Redis DB 0 (task results)
+- Broker: Redis DB 1 (`redis://redis:6379/1`)
+- Backend: Redis DB 2 (`redis://redis:6379/2`, task results)
 - Task discovery: `app.tasks` module
 - Timezone: UTC
 - Task serialization: JSON

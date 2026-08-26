@@ -72,10 +72,10 @@ The system has three primary user journeys:
 - Asynchronous task processing
 - Tasks in `backend/app/tasks/grading.py`
 
-**Redis**:
-- Task queue (database 0)
-- Session management (database 1)
-- Caching (database 2)
+**Redis** (see `app/core/config.py`):
+- DB 0: Application — JWT blacklist, refresh tokens, cache
+- DB 1: Celery message broker / task queue
+- DB 2: Celery result backend
 
 **MinIO/S3**:
 - Object storage for uploaded files
