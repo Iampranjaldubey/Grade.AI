@@ -10,7 +10,7 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -195,19 +195,35 @@ async def approve_evaluation(
             detail="Cannot approve evaluation without AI score. Use /override to set a manual score.",
         )
     
-    # Approve evaluation
-    evaluation.approval_status = ApprovalStatus.APPROVED
-    evaluation.final_score = evaluation.ai_score
-    evaluation.approved_by = current_user.id
-    evaluation.approved_at = datetime.utcnow()
-    
+    # Approve via an atomic compare-and-swap: the UPDATE only applies if the row
+    # is still PENDING. This closes the race where two concurrent approve/override
+    # calls both pass the pre-check above and the second silently clobbers the first.
+    values = {
+        "approval_status": ApprovalStatus.APPROVED,
+        "final_score": evaluation.ai_score,
+        "approved_by": current_user.id,
+        "approved_at": datetime.utcnow(),
+    }
     if request.professor_feedback:
-        evaluation.professor_feedback = request.professor_feedback
-    
+        values["professor_feedback"] = request.professor_feedback
+
+    update_result = await db.execute(
+        update(Evaluation)
+        .where(
+            Evaluation.id == evaluation_id,
+            Evaluation.approval_status == ApprovalStatus.PENDING,
+        )
+        .values(**values)
+    )
+    if update_result.rowcount == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Evaluation was already approved or overridden by another action.",
+        )
+
     # Update submission status
-    submission = evaluation.submission
-    submission.status = SubmissionStatus.EVALUATED
-    
+    evaluation.submission.status = SubmissionStatus.EVALUATED
+
     await db.commit()
     await db.refresh(evaluation)
     
@@ -270,23 +286,39 @@ async def override_evaluation(
             detail=f"Evaluation already {evaluation.approval_status.value}",
         )
     
-    # Override evaluation
-    evaluation.approval_status = ApprovalStatus.OVERRIDDEN
-    evaluation.final_score = Decimal(str(request.final_score))
-    evaluation.professor_feedback = request.professor_feedback
-    evaluation.approved_by = current_user.id
-    evaluation.approved_at = datetime.utcnow()
-    
-    # Optionally update criteria scores in ai_feedback
+    # Override via an atomic compare-and-swap: the UPDATE only applies if the row
+    # is still PENDING, closing the concurrent approve/override clobber race.
+    values = {
+        "approval_status": ApprovalStatus.OVERRIDDEN,
+        "final_score": Decimal(str(request.final_score)),
+        "professor_feedback": request.professor_feedback,
+        "approved_by": current_user.id,
+        "approved_at": datetime.utcnow(),
+    }
+    # Optionally update criteria scores in ai_feedback (build the new value; the
+    # atomic UPDATE replaces the whole JSON column).
     if request.criteria_overrides:
-        if not evaluation.ai_feedback:
-            evaluation.ai_feedback = {}
-        evaluation.ai_feedback["criteria_overrides"] = request.criteria_overrides
-    
+        new_feedback = dict(evaluation.ai_feedback or {})
+        new_feedback["criteria_overrides"] = request.criteria_overrides
+        values["ai_feedback"] = new_feedback
+
+    update_result = await db.execute(
+        update(Evaluation)
+        .where(
+            Evaluation.id == evaluation_id,
+            Evaluation.approval_status == ApprovalStatus.PENDING,
+        )
+        .values(**values)
+    )
+    if update_result.rowcount == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Evaluation was already approved or overridden by another action.",
+        )
+
     # Update submission status
-    submission = evaluation.submission
-    submission.status = SubmissionStatus.EVALUATED
-    
+    evaluation.submission.status = SubmissionStatus.EVALUATED
+
     await db.commit()
     await db.refresh(evaluation)
     
