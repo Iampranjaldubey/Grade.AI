@@ -422,6 +422,24 @@ def process_document(self, document_id: str) -> dict:
         chunk_records = []
         embedding_ids = []
         
+        # Cleanup existing chunks if retry (makes insert idempotent)
+        with get_sync_db() as db:
+            existing_chunks = db.query(DocumentChunk).filter(
+                DocumentChunk.document_id == uuid.UUID(document_id)
+            ).all()
+            
+            if existing_chunks:
+                existing_count = len(existing_chunks)
+                logger.warning(
+                    "retry_cleanup_existing_chunks",
+                    document_id=document_id,
+                    count=existing_count,
+                )
+                db.query(DocumentChunk).filter(
+                    DocumentChunk.document_id == uuid.UUID(document_id)
+                ).delete()
+                db.commit()
+        
         with get_sync_db() as db:
             for i, chunk in enumerate(chunks):
                 embedding_id = str(uuid.uuid4())
@@ -450,6 +468,18 @@ def process_document(self, document_id: str) -> dict:
         
         # Get or create collection for this course
         collection = chromadb_client.get_or_create_collection(course_id)
+        
+        # Cleanup existing ChromaDB entries if retry (makes add idempotent)
+        try:
+            chromadb_client.delete_document_chunks(collection.name, document_id)
+            logger.info("chromadb_retry_cleanup", document_id=document_id)
+        except Exception as cleanup_exc:
+            # Ignore if no chunks existed to delete (not an error)
+            logger.debug(
+                "chromadb_cleanup_skipped",
+                document_id=document_id,
+                reason=str(cleanup_exc),
+            )
         
         # Prepare metadata for each chunk
         metadatas = [
@@ -494,13 +524,19 @@ def process_document(self, document_id: str) -> dict:
             attempt=self.request.retries + 1,
         )
         
-        # Update status to failed
+        # Update status to failed (don't let this mask the original exception)
         try:
             _update_document_status(document_id, ParseStatus.FAILED)
         except Exception as update_exc:
-            logger.error("failed_to_update_status", error=str(update_exc))
+            logger.error(
+                "retry_cleanup_failed",
+                document_id=document_id,
+                cleanup_error=str(update_exc),
+                original_error=str(exc),
+            )
+            # Continue - will surface on next retry if DB truly unreachable
         
-        # Retry with exponential backoff
+        # Retry with exponential backoff (always use ORIGINAL exception)
         if self.request.retries < self.max_retries:
             countdown = 30 * (2 ** self.request.retries)  # 30s, 60s, 120s
             logger.info("retrying_document_processing", countdown=countdown)

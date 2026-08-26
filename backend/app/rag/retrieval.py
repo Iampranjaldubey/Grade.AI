@@ -106,12 +106,14 @@ class RetrievalService:
         # Generate embedding for submission text
         query_embedding = self.embeddings.embed_single(submission_text)
         
-        # Retrieve rubric chunks (all chunks, rubric must be complete)
+        # Retrieve rubric chunks - only used for source attribution (retrieved_sources),
+        # not for grading content. Actual rubric criteria come from the relational
+        # rubrics table (see evaluator.py).
         # ChromaDB requires $and operator for multiple conditions
         rubric_chunks = self._query_collection(
             collection_name=collection_name,
             query_embedding=query_embedding,
-            n_results=50,  # Get all rubric chunks
+            n_results=5,  # Small sample for source file names only
             where_filter={
                 "$and": [
                     {"doc_type": DocumentType.RUBRIC.value},
