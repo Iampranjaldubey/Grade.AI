@@ -23,9 +23,66 @@ from app.schemas.submission import (
     SubmissionWithStudent,
 )
 from app.services.s3_service import get_s3_service
+from app.infrastructure.chromadb_client import ChromaDBClient
+from app.models.document_chunk import DocumentChunk
 from app.tasks.grading import process_document
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 router = APIRouter()
+
+
+async def _cleanup_previous_submission_artifacts(
+    db: AsyncSession,
+    settings: Settings,
+    *,
+    assignment_id: uuid.UUID,
+    student_id: uuid.UUID,
+    course_id: uuid.UUID,
+    submission_id: uuid.UUID,
+) -> None:
+    """
+    On resubmission, remove artifacts of the prior attempt so nothing leaks or
+    goes stale:
+      - old submission Document rows (+ their chunks via cascade) and their
+        ChromaDB vectors (best-effort),
+      - the existing Evaluation, so the new submission is graded from scratch
+        rather than being blocked by a stale (possibly manual) grade.
+    """
+    old_docs = (
+        await db.execute(
+            select(Document).where(
+                Document.assignment_id == assignment_id,
+                Document.uploader_id == student_id,
+                Document.doc_type == DocumentType.SUBMISSION,
+            )
+        )
+    ).scalars().all()
+
+    for od in old_docs:
+        try:
+            chroma = ChromaDBClient(settings)
+            chroma.connect()
+            chroma.delete_document_chunks(f"gradeai_{course_id}", str(od.id))
+        except Exception as exc:
+            logger.warning(
+                "chromadb_cleanup_failed_on_resubmit",
+                document_id=str(od.id),
+                error=str(exc),
+            )
+        await db.delete(od)  # DocumentChunk rows cascade
+
+    existing_eval = (
+        await db.execute(
+            select(Evaluation).where(Evaluation.submission_id == submission_id)
+        )
+    ).scalar_one_or_none()
+    if existing_eval:
+        await db.delete(existing_eval)
+
+    await db.commit()
 
 
 def _fresh_download_url(s3_service, file_key: str | None, fallback_url: str) -> str:
@@ -96,9 +153,13 @@ async def create_submission(
             detail="You are not enrolled in this course",
         )
 
-    # Check if assignment due date has passed
+    # Check if assignment due date has passed. Normalize to UTC-aware so the
+    # comparison never mixes naive/aware datetimes (some backends return naive).
     now = datetime.now(timezone.utc)
-    if assignment.due_date < now:
+    due_date = assignment.due_date
+    if due_date.tzinfo is None:
+        due_date = due_date.replace(tzinfo=timezone.utc)
+    if due_date < now:
         submission_status = SubmissionStatus.LATE
     else:
         submission_status = SubmissionStatus.SUBMITTED
@@ -134,6 +195,18 @@ async def create_submission(
     existing_submission = existing_result.scalar_one_or_none()
 
     if existing_submission:
+        # Resubmission: clean up the previous attempt's document(s), chunks,
+        # vectors, and evaluation before recording the new file, so nothing
+        # orphans and the new work is re-graded from scratch.
+        await _cleanup_previous_submission_artifacts(
+            db,
+            settings,
+            assignment_id=payload.assignment_id,
+            student_id=student.id,
+            course_id=assignment.course_id,
+            submission_id=existing_submission.id,
+        )
+
         # Update existing submission
         existing_submission.file_url = file_url
         existing_submission.file_key = payload.file_key
