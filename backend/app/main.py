@@ -28,8 +28,11 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # Scope methods/headers to what a JSON REST API with bearer auth needs,
+        # rather than wildcarding. Reduces blast radius if CORS_ORIGINS is ever
+        # misconfigured while credentials are allowed.
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
         expose_headers=[settings.request_id_header],
     )
     application.add_middleware(AccessLogMiddleware)
