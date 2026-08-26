@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db, get_current_professor
-from app.core.enums import ApprovalStatus, EnrollmentStatus
+from app.core.enums import ApprovalStatus, EnrollmentStatus, SubmissionStatus
 from app.models.assignment import Assignment
 from app.models.course import Course
 from app.models.enrollment import Enrollment
@@ -274,6 +274,29 @@ async def update_assignment(
 
     for field, value in updates.items():
         setattr(assignment, field, value)
+
+    # If the due date changed, recompute the on-time/late flag for existing
+    # not-yet-evaluated submissions so it stays consistent with the new deadline.
+    # (Evaluated submissions can't reach here - update is blocked above.)
+    if "due_date" in updates:
+        subs_result = await db.execute(
+            select(Submission).where(
+                Submission.assignment_id == assignment_id,
+                Submission.status.in_([SubmissionStatus.SUBMITTED, SubmissionStatus.LATE]),
+            )
+        )
+        def _as_utc(dt: datetime) -> datetime:
+            # Some backends (e.g. SQLite) return naive datetimes; treat as UTC
+            # so the comparison never mixes naive and aware values.
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+        new_due = _as_utc(assignment.due_date)
+        for sub in subs_result.scalars().all():
+            sub.status = (
+                SubmissionStatus.LATE
+                if _as_utc(sub.submitted_at) > new_due
+                else SubmissionStatus.SUBMITTED
+            )
 
     await db.commit()
     await db.refresh(assignment)
