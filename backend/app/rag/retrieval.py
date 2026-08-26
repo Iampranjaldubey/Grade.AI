@@ -205,30 +205,35 @@ class RetrievalService:
             
             if not results:
                 return []
-            
+
+            # Batch-fetch all source document names in a single query instead of
+            # one lookup per chunk (avoids an N+1 on the grading hot path).
+            doc_ids: set[uuid.UUID] = set()
+            for result in results:
+                did = result.get("metadata", {}).get("document_id", "")
+                if did:
+                    try:
+                        doc_ids.add(uuid.UUID(did))
+                    except (ValueError, TypeError):
+                        continue
+
+            name_by_id: dict[str, str] = {}
+            if doc_ids:
+                try:
+                    docs = db_session.query(Document).filter(
+                        Document.id.in_(doc_ids)
+                    ).all()
+                    name_by_id = {str(d.id): d.file_name for d in docs}
+                except Exception as e:
+                    logger.warning("document_lookup_failed", error=str(e))
+
             # Map results to RetrievedChunk objects
             retrieved_chunks = []
             for result in results:
                 metadata = result.get("metadata", {})
-                
-                # Get source document name from database
                 document_id_str = metadata.get("document_id", "")
-                source_name = "Unknown"
-                
-                if document_id_str:
-                    try:
-                        doc = db_session.query(Document).filter(
-                            Document.id == uuid.UUID(document_id_str)
-                        ).first()
-                        if doc:
-                            source_name = doc.file_name
-                    except Exception as e:
-                        logger.warning(
-                            "document_lookup_failed",
-                            document_id=document_id_str,
-                            error=str(e),
-                        )
-                
+                source_name = name_by_id.get(document_id_str, "Unknown")
+
                 chunk = RetrievedChunk(
                     chunk_text=result.get("document", ""),
                     document_id=document_id_str,
