@@ -75,8 +75,10 @@ async def list_pending_evaluations(
     output = []
     for evaluation in evaluations:
         confidence_score = 0.5
+        is_fallback = False
         if evaluation.ai_feedback and isinstance(evaluation.ai_feedback, dict):
             confidence_score = evaluation.ai_feedback.get("confidence_score", 0.5)
+            is_fallback = bool(evaluation.ai_feedback.get("is_fallback", False))
         
         output.append(
             EvaluationListOut(
@@ -86,6 +88,7 @@ async def list_pending_evaluations(
                 approval_status=evaluation.approval_status,
                 evaluated_at=evaluation.evaluated_at,
                 confidence_score=confidence_score,
+                is_fallback=is_fallback,
                 student_name=evaluation.submission.student.name,
                 student_email=evaluation.submission.student.email,
                 assignment_title=evaluation.submission.assignment.title,

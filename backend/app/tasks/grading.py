@@ -199,6 +199,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     "criteria_scores": evaluation_result.criteria_scores,
                     "percentage": evaluation_result.percentage,
                     "confidence_score": evaluation_result.confidence_score,
+                    "is_fallback": evaluation_result.is_fallback,
                 }
                 existing_eval.strengths = evaluation_result.strengths
                 existing_eval.weaknesses = evaluation_result.weaknesses
@@ -219,8 +220,10 @@ def evaluate_submission(self, submission_id: str) -> dict:
                 ]
                 existing_eval.evaluated_at = datetime.utcnow()
                 
-                # Auto-approve if grading mode is AUTO
-                if assignment_obj.grading_mode == GradingMode.AUTO:
+                # Auto-approve if grading mode is AUTO.
+                # Never auto-approve a fallback evaluation (AI grading failed entirely,
+                # placeholder 50% score) - it must be held for professor review.
+                if assignment_obj.grading_mode == GradingMode.AUTO and not evaluation_result.is_fallback:
                     existing_eval.approval_status = ApprovalStatus.APPROVED
                     existing_eval.final_score = existing_eval.ai_score
                     existing_eval.approved_at = datetime.utcnow()
@@ -229,6 +232,15 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     logger.info(
                         "evaluation_auto_approved",
                         evaluation_id=str(existing_eval.id),
+                        grading_mode=assignment_obj.grading_mode.value,
+                    )
+                elif assignment_obj.grading_mode == GradingMode.AUTO and evaluation_result.is_fallback:
+                    # Held as pending despite AUTO mode - surfaces in professor's pending review list.
+                    existing_eval.approval_status = ApprovalStatus.PENDING
+                    logger.warning(
+                        "fallback_evaluation_held_for_review",
+                        evaluation_id=str(existing_eval.id),
+                        submission_id=submission_id,
                         grading_mode=assignment_obj.grading_mode.value,
                     )
                 
@@ -242,6 +254,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
                         "criteria_scores": evaluation_result.criteria_scores,
                         "percentage": evaluation_result.percentage,
                         "confidence_score": evaluation_result.confidence_score,
+                        "is_fallback": evaluation_result.is_fallback,
                     },
                     strengths=evaluation_result.strengths,
                     weaknesses=evaluation_result.weaknesses,
@@ -263,8 +276,14 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     evaluated_at=datetime.utcnow(),
                 )
                 
-                # Auto-approve if grading mode is AUTO
-                if assignment_obj.grading_mode == GradingMode.AUTO:
+                # Auto-approve if grading mode is AUTO.
+                # Never auto-approve a fallback evaluation (AI grading failed entirely,
+                # placeholder 50% score) - it must be held for professor review.
+                auto_approved = (
+                    assignment_obj.grading_mode == GradingMode.AUTO
+                    and not evaluation_result.is_fallback
+                )
+                if auto_approved:
                     evaluation.approval_status = ApprovalStatus.APPROVED
                     evaluation.final_score = evaluation.ai_score
                     evaluation.approved_at = datetime.utcnow()
@@ -274,10 +293,17 @@ def evaluate_submission(self, submission_id: str) -> dict:
                 db.flush()
                 
                 # Log after flush so we have evaluation.id
-                if assignment_obj.grading_mode == GradingMode.AUTO:
+                if auto_approved:
                     logger.info(
                         "evaluation_auto_approved",
                         evaluation_id=str(evaluation.id),
+                        grading_mode=assignment_obj.grading_mode.value,
+                    )
+                elif assignment_obj.grading_mode == GradingMode.AUTO and evaluation_result.is_fallback:
+                    logger.warning(
+                        "fallback_evaluation_held_for_review",
+                        evaluation_id=str(evaluation.id),
+                        submission_id=submission_id,
                         grading_mode=assignment_obj.grading_mode.value,
                     )
                 

@@ -55,6 +55,13 @@ class EvaluationOut(BaseModel):
             return self.ai_feedback.get("percentage", 0.0)
         return 0.0
 
+    @property
+    def is_fallback(self) -> bool:
+        """True if this is a placeholder produced when AI grading failed entirely."""
+        if self.ai_feedback and isinstance(self.ai_feedback, dict):
+            return bool(self.ai_feedback.get("is_fallback", False))
+        return False
+
     model_config = {"from_attributes": True}
 
 
@@ -66,6 +73,7 @@ class EvaluationListOut(BaseModel):
     approval_status: ApprovalStatus
     evaluated_at: datetime
     confidence_score: float
+    is_fallback: bool = False
     student_name: str
     student_email: str
     assignment_title: str

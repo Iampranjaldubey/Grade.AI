@@ -31,6 +31,7 @@ class EvaluationResult:
     overall_feedback: str
     confidence_score: float  # 0-1
     retrieved_sources: List[str]  # Source file names
+    is_fallback: bool = False  # True only for the placeholder produced when AI grading fails entirely
 
 
 class GradingEvaluator:
@@ -433,4 +434,5 @@ Return JSON only:
             overall_feedback="Automatic evaluation encountered an error. This submission requires manual grading by the professor.",
             confidence_score=0.0,
             retrieved_sources=sources,
+            is_fallback=True,
         )
