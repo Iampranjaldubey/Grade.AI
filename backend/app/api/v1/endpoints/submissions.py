@@ -247,45 +247,16 @@ async def create_submission(
     await db.commit()
     await db.refresh(document)
 
-    # Trigger document processing
+    # Trigger document processing. When processing succeeds, process_document
+    # itself chains AI evaluation for auto/hybrid submissions (see grading.py) -
+    # so evaluation never races ahead of parsing, and no fixed countdown is used.
     try:
         process_document.delay(str(document.id))
     except Exception as exc:
-        import structlog
-        logger = structlog.get_logger(__name__)
         logger.error(
             "failed_to_queue_document_processing",
             document_id=str(document.id),
             error=str(exc),
-        )
-
-    # Trigger AI evaluation after document processing completes
-    # Only queue AI evaluation for auto and hybrid modes, skip for manual
-    from app.core.enums import GradingMode
-    
-    if assignment.grading_mode in [GradingMode.AUTO, GradingMode.HYBRID]:
-        try:
-            from app.tasks.grading import evaluate_submission
-            evaluate_submission.apply_async(
-                args=[str(submission.id)],
-                countdown=15,  # wait 15s for document processing to complete first
-            )
-        except Exception as exc:
-            import structlog
-            logger = structlog.get_logger(__name__)
-            logger.error(
-                "failed_to_queue_evaluation",
-                submission_id=str(submission.id),
-                error=str(exc),
-            )
-    else:
-        # Manual mode - professor will grade without AI assistance
-        import structlog
-        logger = structlog.get_logger(__name__)
-        logger.info(
-            "skipped_ai_evaluation_manual_mode",
-            submission_id=str(submission.id),
-            grading_mode=assignment.grading_mode.value,
         )
 
     return SubmissionOut.model_validate(submission)

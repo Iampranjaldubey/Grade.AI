@@ -8,7 +8,7 @@ import structlog
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
-from app.core.enums import ApprovalStatus, GradingMode, ParseStatus
+from app.core.enums import ApprovalStatus, DocumentType, GradingMode, ParseStatus
 from app.db.sync_session import get_sync_db
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.document import Document
@@ -389,6 +389,7 @@ def process_document(self, document_id: str) -> dict:
             course_id = document.course_id
             assignment_id = document.assignment_id
             doc_type = document.doc_type
+            uploader_id = document.uploader_id
             
             logger.info(
                 "document_loaded",
@@ -534,6 +535,42 @@ def process_document(self, document_id: str) -> dict:
         _update_document_status(document_id, ParseStatus.SUCCESS)
         
         logger.info("process_document_completed", document_id=document_id, num_chunks=len(chunks))
+
+        # Step 10: If this is a student submission, chain AI evaluation now that
+        # parsing + embedding are actually complete. This replaces the API-side
+        # fixed 15s countdown heuristic, so evaluation never races ahead of
+        # processing (auto/hybrid only; manual mode is graded by the professor).
+        if doc_type == DocumentType.SUBMISSION and assignment_id is not None:
+            try:
+                from app.models.assignment import Assignment
+                from app.models.submission import Submission
+
+                with get_sync_db() as db:
+                    assignment_obj = db.query(Assignment).filter(
+                        Assignment.id == assignment_id
+                    ).first()
+                    submission = db.query(Submission).filter(
+                        Submission.assignment_id == assignment_id,
+                        Submission.student_id == uploader_id,
+                    ).order_by(Submission.submitted_at.desc()).first()
+                    grading_mode = assignment_obj.grading_mode if assignment_obj else None
+                    submission_id = str(submission.id) if submission else None
+
+                if submission_id and grading_mode in (GradingMode.AUTO, GradingMode.HYBRID):
+                    evaluate_submission.delay(submission_id)
+                    logger.info(
+                        "chained_evaluation_after_processing",
+                        submission_id=submission_id,
+                        grading_mode=grading_mode.value,
+                    )
+            except Exception as chain_exc:
+                # Chaining is best-effort; a failure here shouldn't fail the
+                # document processing that already succeeded.
+                logger.error(
+                    "failed_to_chain_evaluation",
+                    document_id=document_id,
+                    error=str(chain_exc),
+                )
         
         return {
             "document_id": document_id,
