@@ -147,6 +147,26 @@ def parse_txt(file_bytes: bytes) -> str:
         raise ValueError(f"Failed to parse text file: {str(exc)}") from exc
 
 
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _content_matches_mime(file_bytes: bytes, mime_type: str) -> bool:
+    """
+    Verify the file's leading bytes (magic number) match the declared MIME type,
+    so a file merely renamed to .pdf/.docx isn't handed to a type-specific parser.
+    text/plain has no reliable signature, so it's accepted (parse_txt decodes it).
+    """
+    head = file_bytes[:8]
+    if mime_type == "application/pdf":
+        return head.startswith(b"%PDF-")
+    if mime_type == _DOCX_MIME:
+        # DOCX is a ZIP container: PK\x03\x04 (normal), PK\x05\x06 (empty), PK\x07\x08 (spanned).
+        return head[:2] == b"PK"
+    if mime_type == "text/plain":
+        return True
+    return False
+
+
 def parse_document(file_bytes: bytes, mime_type: str) -> str:
     """
     Route to appropriate parser based on MIME type.
@@ -159,18 +179,26 @@ def parse_document(file_bytes: bytes, mime_type: str) -> str:
         Extracted text string
         
     Raises:
-        ValueError: If mime_type is unsupported or parsing fails
+        ValueError: If mime_type is unsupported, content doesn't match the
+            declared type, or parsing fails.
     """
     mime_type = mime_type.lower()
-    
+
+    if mime_type not in ("application/pdf", _DOCX_MIME, "text/plain"):
+        raise ValueError(f"Unsupported MIME type: {mime_type}")
+
+    # Reject files whose actual content doesn't match the claimed type before
+    # handing them to a parser that assumes that type.
+    if not _content_matches_mime(file_bytes, mime_type):
+        logger.warning("content_type_mismatch", declared_mime=mime_type)
+        raise ValueError(f"File content does not match declared type '{mime_type}'")
+
     if mime_type == "application/pdf":
         return parse_pdf(file_bytes)
-    elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    elif mime_type == _DOCX_MIME:
         return parse_docx(file_bytes)
-    elif mime_type == "text/plain":
+    else:  # text/plain
         return parse_txt(file_bytes)
-    else:
-        raise ValueError(f"Unsupported MIME type: {mime_type}")
 
 
 def _clean_text(text: str) -> str:
