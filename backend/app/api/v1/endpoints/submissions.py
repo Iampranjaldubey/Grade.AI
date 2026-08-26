@@ -28,6 +28,20 @@ from app.tasks.grading import process_document
 router = APIRouter()
 
 
+def _fresh_download_url(s3_service, file_key: str | None, fallback_url: str) -> str:
+    """
+    Generate a fresh, short-lived presigned download URL from the stored file_key.
+    Presigning is a local operation (no S3 round trip). Falls back to the stored
+    (possibly stale) URL for legacy rows that predate file_key persistence.
+    """
+    if not file_key:
+        return fallback_url
+    try:
+        return s3_service.generate_presigned_download_url(file_key, expires=3600)
+    except Exception:
+        return fallback_url
+
+
 def _get_mime_type(file_name: str) -> str:
     """Determine MIME type from file extension."""
     name = file_name.lower()
@@ -122,6 +136,7 @@ async def create_submission(
     if existing_submission:
         # Update existing submission
         existing_submission.file_url = file_url
+        existing_submission.file_key = payload.file_key
         existing_submission.file_name = payload.file_name
         existing_submission.submitted_at = datetime.now(timezone.utc)
         existing_submission.status = submission_status
@@ -134,6 +149,7 @@ async def create_submission(
             assignment_id=payload.assignment_id,
             student_id=student.id,
             file_url=file_url,
+            file_key=payload.file_key,
             file_name=payload.file_name,
             status=submission_status,
         )
@@ -211,6 +227,7 @@ async def get_my_submission(
     assignment_id: uuid.UUID,
     student: User = Depends(get_current_student),
     db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> SubmissionOut:
     """Get the student's own submission for an assignment."""
 
@@ -253,7 +270,11 @@ async def get_my_submission(
             detail="No submission found for this assignment",
         )
 
-    return SubmissionOut.model_validate(submission)
+    # Regenerate a fresh download URL so historical submissions never return an
+    # expired link (the stored file_url is a snapshot that expires after 24h).
+    s3_service = get_s3_service(settings)
+    fresh_url = _fresh_download_url(s3_service, submission.file_key, submission.file_url)
+    return SubmissionOut.model_validate(submission).model_copy(update={"file_url": fresh_url})
 
 
 @router.get(
@@ -265,6 +286,7 @@ async def get_all_submissions(
     assignment_id: uuid.UUID,
     professor: User = Depends(get_current_professor),
     db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> List[SubmissionWithStudent]:
     """Get all submissions for an assignment (professor only)."""
 
@@ -294,14 +316,16 @@ async def get_all_submissions(
 
     rows = result.all()
 
+    s3_service = get_s3_service(settings)
     submissions_with_students = []
     for submission, user, evaluation in rows:
+        fresh_url = _fresh_download_url(s3_service, submission.file_key, submission.file_url)
         submissions_with_students.append(
             SubmissionWithStudent(
                 id=submission.id,
                 assignment_id=submission.assignment_id,
                 student_id=submission.student_id,
-                file_url=submission.file_url,
+                file_url=fresh_url,
                 file_name=submission.file_name,
                 submitted_at=submission.submitted_at,
                 status=submission.status,

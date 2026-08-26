@@ -34,6 +34,20 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 
+def _fresh_download_url(s3_service, file_key: str | None, fallback_url: str) -> str:
+    """
+    Generate a fresh, short-lived presigned download URL from the stored file_key.
+    Presigning is local (no S3 round trip). Falls back to the stored (possibly
+    stale) URL for legacy rows with no usable file_key.
+    """
+    if not file_key:
+        return fallback_url
+    try:
+        return s3_service.generate_presigned_download_url(file_key, expires=3600)
+    except Exception:
+        return fallback_url
+
+
 async def _verify_course_access(
     course_id: uuid.UUID,
     user: User,
@@ -321,6 +335,7 @@ async def list_course_documents(
     course_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> List[DocumentOut]:
     """List all documents for a course (professor or enrolled student)."""
     
@@ -335,4 +350,11 @@ async def list_course_documents(
     )
     documents = result.scalars().all()
     
-    return [DocumentOut.model_validate(doc) for doc in documents]
+    # Regenerate fresh download URLs from file_key so listing never returns an
+    # expired link (the stored file_url expires 24h after upload).
+    s3_service = get_s3_service(settings)
+    out: List[DocumentOut] = []
+    for doc in documents:
+        fresh_url = _fresh_download_url(s3_service, doc.file_key, doc.file_url)
+        out.append(DocumentOut.model_validate(doc).model_copy(update={"file_url": fresh_url}))
+    return out

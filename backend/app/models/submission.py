@@ -38,6 +38,7 @@ class Submission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     file_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    file_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
