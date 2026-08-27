@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import DocumentType, ParseStatus
-from app.db.types import pg_enum
 from app.db.session import Base
+from app.db.types import pg_enum
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
@@ -47,7 +47,9 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     file_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    file_key: Mapped[str] = mapped_column(String(1024), nullable=False, default="", server_default="")
+    file_key: Mapped[str] = mapped_column(
+        String(1024), nullable=False, default="", server_default=""
+    )
     mime_type: Mapped[str] = mapped_column(String(127), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     parsed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -59,22 +61,22 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
 
-    course: Mapped["Course"] = relationship(
+    course: Mapped[Course] = relationship(
         "Course",
         back_populates="documents",
         foreign_keys=[course_id],
     )
-    assignment: Mapped["Assignment | None"] = relationship(
+    assignment: Mapped[Assignment | None] = relationship(
         "Assignment",
         back_populates="documents",
         foreign_keys=[assignment_id],
     )
-    uploader: Mapped["User"] = relationship(
+    uploader: Mapped[User] = relationship(
         "User",
         back_populates="documents_uploaded",
         foreign_keys=[uploader_id],
     )
-    chunks: Mapped[List["DocumentChunk"]] = relationship(
+    chunks: Mapped[list[DocumentChunk]] = relationship(
         "DocumentChunk",
         back_populates="document",
         cascade="all, delete-orphan",

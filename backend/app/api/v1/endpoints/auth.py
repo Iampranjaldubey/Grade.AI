@@ -1,5 +1,4 @@
 import uuid
-from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from redis.asyncio import Redis

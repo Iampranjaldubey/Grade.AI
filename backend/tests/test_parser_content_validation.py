@@ -3,6 +3,7 @@ Tests for Finding #13: parse_document validates that file content (magic bytes)
 matches the declared MIME type, so a file merely renamed to .pdf/.docx is
 rejected before being handed to pdfplumber / python-docx.
 """
+
 import pytest
 
 from app.rag.parsers import parse_document

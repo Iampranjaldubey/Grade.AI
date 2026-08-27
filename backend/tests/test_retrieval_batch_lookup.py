@@ -2,10 +2,9 @@
 Test for Finding #8: RetrievalService._query_collection batch-fetches source
 document names in a single query rather than one lookup per chunk (N+1).
 """
+
 import uuid
 from unittest.mock import MagicMock
-
-import pytest
 
 from app.rag.retrieval import RetrievalService
 
@@ -32,8 +31,12 @@ def test_query_collection_batch_fetches_documents_once() -> None:
     chroma = MagicMock()
     chroma.query.return_value = chroma_results
 
-    doc_a = MagicMock(); doc_a.id = uuid.UUID(id_a); doc_a.file_name = "notes_a.pdf"
-    doc_b = MagicMock(); doc_b.id = uuid.UUID(id_b); doc_b.file_name = "notes_b.pdf"
+    doc_a = MagicMock()
+    doc_a.id = uuid.UUID(id_a)
+    doc_a.file_name = "notes_a.pdf"
+    doc_b = MagicMock()
+    doc_b.id = uuid.UUID(id_b)
+    doc_b.file_name = "notes_b.pdf"
 
     db_session = MagicMock()
     db_session.query.return_value.filter.return_value.all.return_value = [doc_a, doc_b]

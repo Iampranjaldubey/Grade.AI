@@ -9,8 +9,8 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import SubmissionStatus
-from app.db.types import pg_enum
 from app.db.session import Base
+from app.db.types import pg_enum
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
@@ -54,13 +54,13 @@ class Submission(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
 
-    assignment: Mapped["Assignment"] = relationship("Assignment", back_populates="submissions")
-    student: Mapped["User"] = relationship(
+    assignment: Mapped[Assignment] = relationship("Assignment", back_populates="submissions")
+    student: Mapped[User] = relationship(
         "User",
         back_populates="submissions",
         foreign_keys=[student_id],
     )
-    evaluation: Mapped["Evaluation | None"] = relationship(
+    evaluation: Mapped[Evaluation | None] = relationship(
         "Evaluation",
         back_populates="submission",
         uselist=False,

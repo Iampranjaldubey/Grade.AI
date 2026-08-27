@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from argon2 import PasswordHasher
@@ -26,7 +26,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(user_id: uuid.UUID, role: UserRole) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    expire = datetime.now(UTC) + timedelta(minutes=15)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "role": role.value,
@@ -39,7 +39,7 @@ def create_access_token(user_id: uuid.UUID, role: UserRole) -> str:
 
 def create_refresh_token(user_id: uuid.UUID) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "jti": str(uuid.uuid4()),

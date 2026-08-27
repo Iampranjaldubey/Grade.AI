@@ -1,15 +1,14 @@
 import random
 import string
 import uuid
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, get_db, get_current_professor, get_current_student
+from app.core.deps import get_current_professor, get_current_student, get_current_user, get_db
 from app.core.enums import EnrollmentStatus
 from app.models.assignment import Assignment
 from app.models.course import Course
@@ -140,7 +139,7 @@ async def create_course(
 
 @router.get(
     "",
-    response_model=List[CourseListOut],
+    response_model=list[CourseListOut],
     summary="List professor's courses",
 )
 async def list_courses(
@@ -148,7 +147,7 @@ async def list_courses(
     size: int = Query(default=20, ge=1, le=100),
     professor: User = Depends(get_current_professor),
     db: AsyncSession = Depends(get_db),
-) -> List[CourseListOut]:
+) -> list[CourseListOut]:
     offset = (page - 1) * size
     result = await db.execute(
         select(Course)
@@ -191,7 +190,9 @@ async def get_course(
             )
         )
         if enrollment.scalar_one_or_none() is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course"
+            )
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -370,7 +371,7 @@ async def join_course(
         # Re-activate a previously dropped enrollment. Reset enrolled_at so
         # "time enrolled" reflects the current (re)join, not the original one.
         existing_enrollment.status = EnrollmentStatus.ACTIVE
-        existing_enrollment.enrolled_at = datetime.now(timezone.utc)
+        existing_enrollment.enrolled_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(existing_enrollment)
         await db.refresh(course)
@@ -393,13 +394,13 @@ async def join_course(
 
 @enrollments_router.get(
     "/my-courses",
-    response_model=List[CourseOut],
+    response_model=list[CourseOut],
     summary="List courses the student is enrolled in",
 )
 async def my_courses(
     student: User = Depends(get_current_student),
     db: AsyncSession = Depends(get_db),
-) -> List[CourseOut]:
+) -> list[CourseOut]:
     result = await db.execute(
         select(Course)
         .join(Enrollment, Enrollment.course_id == Course.id)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -34,24 +34,26 @@ class Course(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     semester: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
-    professor: Mapped["User"] = relationship(
+    professor: Mapped[User] = relationship(
         "User",
         back_populates="courses_taught",
         foreign_keys=[professor_id],
     )
-    enrollments: Mapped[List["Enrollment"]] = relationship(
+    enrollments: Mapped[list[Enrollment]] = relationship(
         "Enrollment",
         back_populates="course",
         cascade="all, delete-orphan",
     )
-    assignments: Mapped[List["Assignment"]] = relationship(
+    assignments: Mapped[list[Assignment]] = relationship(
         "Assignment",
         back_populates="course",
         cascade="all, delete-orphan",
     )
-    documents: Mapped[List["Document"]] = relationship(
+    documents: Mapped[list[Document]] = relationship(
         "Document",
         back_populates="course",
         foreign_keys="Document.course_id",

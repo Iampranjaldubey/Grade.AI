@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,18 +9,18 @@ from app.schemas.assignment import AssignmentWithRubrics  # noqa: F401 — re-ex
 
 class RubricCreate(BaseModel):
     criteria_name: str = Field(min_length=1, max_length=255)
-    description: Optional[str] = None
+    description: str | None = None
     max_points: Decimal = Field(gt=0)
     weight: Decimal = Field(ge=0, le=100)
-    evaluation_hints: Optional[str] = None
+    evaluation_hints: str | None = None
 
 
 class RubricUpdate(BaseModel):
-    criteria_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    max_points: Optional[Decimal] = Field(default=None, gt=0)
-    weight: Optional[Decimal] = Field(default=None, ge=0, le=100)
-    evaluation_hints: Optional[str] = None
+    criteria_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    max_points: Decimal | None = Field(default=None, gt=0)
+    weight: Decimal | None = Field(default=None, ge=0, le=100)
+    evaluation_hints: str | None = None
 
 
 class RubricOut(BaseModel):
@@ -30,15 +29,15 @@ class RubricOut(BaseModel):
     id: uuid.UUID
     assignment_id: uuid.UUID
     criteria_name: str
-    description: Optional[str]
+    description: str | None
     max_points: Decimal
     weight: Decimal
-    evaluation_hints: Optional[str]
+    evaluation_hints: str | None
     created_at: datetime
 
 
 class RubricListCreate(BaseModel):
-    criteria: List[RubricCreate]
+    criteria: list[RubricCreate]
 
     @model_validator(mode="after")
     def validate_weights_sum(self) -> "RubricListCreate":

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.core.config import Settings, get_settings
+from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import close_db_pool, init_db_pool
 from app.infrastructure.chromadb_client import ChromaDBClient

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import UserRole
-from app.db.types import pg_enum
 from app.db.session import Base
+from app.db.types import pg_enum
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
@@ -30,34 +30,36 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
-    courses_taught: Mapped[List["Course"]] = relationship(
+    courses_taught: Mapped[list[Course]] = relationship(
         "Course",
         back_populates="professor",
         foreign_keys="Course.professor_id",
     )
-    enrollments: Mapped[List["Enrollment"]] = relationship(
+    enrollments: Mapped[list[Enrollment]] = relationship(
         "Enrollment",
         back_populates="student",
         foreign_keys="Enrollment.student_id",
     )
-    documents_uploaded: Mapped[List["Document"]] = relationship(
+    documents_uploaded: Mapped[list[Document]] = relationship(
         "Document",
         back_populates="uploader",
         foreign_keys="Document.uploader_id",
     )
-    submissions: Mapped[List["Submission"]] = relationship(
+    submissions: Mapped[list[Submission]] = relationship(
         "Submission",
         back_populates="student",
         foreign_keys="Submission.student_id",
     )
-    evaluations_approved: Mapped[List["Evaluation"]] = relationship(
+    evaluations_approved: Mapped[list[Evaluation]] = relationship(
         "Evaluation",
         back_populates="approved_by_user",
         foreign_keys="Evaluation.approved_by",
     )
-    audit_logs: Mapped[List["AuditLog"]] = relationship(
+    audit_logs: Mapped[list[AuditLog]] = relationship(
         "AuditLog",
         back_populates="user",
         foreign_keys="AuditLog.user_id",

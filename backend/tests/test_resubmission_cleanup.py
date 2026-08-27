@@ -4,8 +4,9 @@ and their ChromaDB vectors are removed (no leak) and the stale Evaluation is
 deleted so the new submission is re-graded from scratch (rather than being
 blocked by a prior manual grade via the ai_score-None skip guard).
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -55,20 +56,27 @@ async def _setup(client: AsyncClient, db_session: AsyncSession, code: str) -> tu
         json={"course_name": "C", "course_code": code, "semester": "F26"},
     )
     course_id = course.json()["id"]
-    due = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    due = (datetime.now(UTC) + timedelta(days=7)).isoformat()
     assignment = await client.post(
         "/api/v1/assignments",
         headers={"Authorization": f"Bearer {prof['access_token']}"},
-        json={"course_id": course_id, "title": "A", "due_date": due,
-              "max_score": "100", "grading_mode": GradingMode.HYBRID.value},
+        json={
+            "course_id": course_id,
+            "title": "A",
+            "due_date": due,
+            "max_score": "100",
+            "grading_mode": GradingMode.HYBRID.value,
+        },
     )
     assignment_id = assignment.json()["id"]
     # Enroll the student directly.
-    db_session.add(Enrollment(
-        course_id=uuid.UUID(course_id),
-        student_id=uuid.UUID(student["user"]["id"]),
-        status=EnrollmentStatus.ACTIVE,
-    ))
+    db_session.add(
+        Enrollment(
+            course_id=uuid.UUID(course_id),
+            student_id=uuid.UUID(student["user"]["id"]),
+            status=EnrollmentStatus.ACTIVE,
+        )
+    )
     await db_session.commit()
     return student["access_token"], assignment_id, student["user"]["id"]
 
@@ -77,8 +85,12 @@ async def _submit(client: AsyncClient, token: str, assignment_id: str, name: str
     resp = await client.post(
         "/api/v1/submissions",
         headers={"Authorization": f"Bearer {token}"},
-        json={"assignment_id": assignment_id, "file_name": name,
-              "file_key": f"key/{uuid.uuid4()}_{name}", "file_size_bytes": 1000},
+        json={
+            "assignment_id": assignment_id,
+            "file_name": name,
+            "file_key": f"key/{uuid.uuid4()}_{name}",
+            "file_size_bytes": 1000,
+        },
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -117,14 +129,16 @@ async def test_resubmission_deletes_stale_manual_evaluation(
     submission_id = uuid.UUID(first["id"])
 
     # Simulate a prior manual grade (ai_score None) attached to the first attempt.
-    db_session.add(Evaluation(
-        submission_id=submission_id,
-        ai_score=None,
-        final_score=70,
-        professor_feedback="graded v1",
-        approval_status=ApprovalStatus.OVERRIDDEN,
-        evaluated_at=datetime.utcnow(),
-    ))
+    db_session.add(
+        Evaluation(
+            submission_id=submission_id,
+            ai_score=None,
+            final_score=70,
+            professor_feedback="graded v1",
+            approval_status=ApprovalStatus.OVERRIDDEN,
+            evaluated_at=datetime.utcnow(),
+        )
+    )
     await db_session.commit()
 
     await _submit(client, token, aid, "v2.pdf")  # resubmission

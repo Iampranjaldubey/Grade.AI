@@ -2,8 +2,9 @@
 Tests for Finding #16 (enrolled_at resets on rejoin) and #17 (course creation
 retries on a join_code collision instead of surfacing a raw 500).
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -44,10 +45,12 @@ async def test_rejoin_resets_enrolled_at(client: AsyncClient, db_session: AsyncS
     assert j1.status_code == 201, j1.text
 
     # Backdate enrolled_at and mark dropped to simulate an old, dropped enrollment.
-    enr = (await db_session.execute(
-        select(Enrollment).where(Enrollment.student_id == uuid.UUID(student["user"]["id"]))
-    )).scalar_one()
-    old_time = datetime.now(timezone.utc) - timedelta(days=100)
+    enr = (
+        await db_session.execute(
+            select(Enrollment).where(Enrollment.student_id == uuid.UUID(student["user"]["id"]))
+        )
+    ).scalar_one()
+    old_time = datetime.now(UTC) - timedelta(days=100)
     enr.enrolled_at = old_time
     enr.status = EnrollmentStatus.DROPPED
     await db_session.commit()
@@ -60,15 +63,17 @@ async def test_rejoin_resets_enrolled_at(client: AsyncClient, db_session: AsyncS
     )
     assert j2.status_code == 201, j2.text
 
-    refreshed = (await db_session.execute(
-        select(Enrollment).where(Enrollment.student_id == uuid.UUID(student["user"]["id"]))
-    )).scalar_one()
+    refreshed = (
+        await db_session.execute(
+            select(Enrollment).where(Enrollment.student_id == uuid.UUID(student["user"]["id"]))
+        )
+    ).scalar_one()
     assert refreshed.status == EnrollmentStatus.ACTIVE
     # enrolled_at was reset to ~now, not the 100-day-old value. Normalize to a
     # naive UTC value since SQLite returns naive datetimes.
     enrolled = refreshed.enrolled_at
     if enrolled.tzinfo is not None:
-        enrolled = enrolled.astimezone(timezone.utc).replace(tzinfo=None)
+        enrolled = enrolled.astimezone(UTC).replace(tzinfo=None)
     assert enrolled > datetime.utcnow() - timedelta(days=1)
 
 

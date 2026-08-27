@@ -30,4 +30,4 @@ class Rubric(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     weight: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     evaluation_hints: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    assignment: Mapped["Assignment"] = relationship("Assignment", back_populates="rubrics")
+    assignment: Mapped[Assignment] = relationship("Assignment", back_populates="rubrics")

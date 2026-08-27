@@ -1,13 +1,14 @@
 import uuid
-from typing import List
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user, get_db
-from app.core.config import get_settings, Settings
-from app.core.enums import DocumentType, ParseStatus
+from app.core.enums import ParseStatus
+from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment
 from app.models.course import Course
 from app.models.document import Document
@@ -22,10 +23,7 @@ from app.schemas.document import (
     PresignResponse,
 )
 from app.services.s3_service import get_s3_service
-from app.infrastructure.chromadb_client import ChromaDBClient
 from app.tasks.grading import process_document
-
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -61,17 +59,17 @@ async def _verify_course_access(
     """Verify user has access to the course (professor owns it or student is enrolled)."""
     result = await db.execute(select(Course).where(Course.id == course_id))
     course = result.scalar_one_or_none()
-    
+
     if not course:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Course not found",
         )
-    
+
     # Professor owns the course
     if course.professor_id == user.id:
         return course
-    
+
     # Student is enrolled
     enrollment = await db.execute(
         select(Enrollment).where(
@@ -82,7 +80,7 @@ async def _verify_course_access(
     )
     if enrollment.scalar_one_or_none():
         return course
-    
+
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You do not have access to this course",
@@ -101,14 +99,14 @@ async def presign_upload(
     settings: Settings = Depends(get_settings),
 ) -> PresignResponse:
     """Generate a presigned URL for uploading a file to S3."""
-    
+
     # Validate content type
     if payload.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Content type not allowed. Allowed types: {', '.join(ALLOWED_CONTENT_TYPES)}",
         )
-    
+
     # Fast-fail on client-declared oversized uploads before issuing a URL.
     # (Authoritative enforcement happens against the actual object at confirm time.)
     if (
@@ -119,10 +117,10 @@ async def presign_upload(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds maximum allowed size of {settings.max_upload_size_bytes} bytes",
         )
-    
+
     # Verify course access
     await _verify_course_access(payload.course_id, current_user, db)
-    
+
     # If assignment_id provided, verify it belongs to the course
     if payload.assignment_id:
         assignment_result = await db.execute(
@@ -136,11 +134,11 @@ async def presign_upload(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Assignment not found in this course",
             )
-    
+
     # Generate file key
     file_uuid = uuid.uuid4()
     file_key = f"{payload.course_id}/{payload.doc_type.value}/{file_uuid}_{payload.file_name}"
-    
+
     # Generate presigned URL
     s3_service = get_s3_service(settings)
     try:
@@ -153,8 +151,8 @@ async def presign_upload(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate presigned URL: {str(exc)}",
-        )
-    
+        ) from exc
+
     return PresignResponse(
         upload_url=upload_url,
         file_key=file_key,
@@ -175,10 +173,10 @@ async def confirm_upload(
     settings: Settings = Depends(get_settings),
 ) -> DocumentOut:
     """Confirm that a file was uploaded and create a document record."""
-    
+
     # Verify course access
     await _verify_course_access(payload.course_id, current_user, db)
-    
+
     # Verify file exists in S3
     s3_service = get_s3_service(settings)
     if not s3_service.file_exists(payload.file_key):
@@ -186,7 +184,7 @@ async def confirm_upload(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found in storage. Please upload the file first.",
         )
-    
+
     # Enforce size limit against the ACTUAL stored object (not the client-declared
     # value). Delete the oversized object so it can't be picked up later.
     actual_size = s3_service.get_file_size(payload.file_key)
@@ -196,7 +194,7 @@ async def confirm_upload(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds maximum allowed size of {settings.max_upload_size_bytes} bytes",
         )
-    
+
     # Determine MIME type from file name
     mime_type = "application/octet-stream"
     if payload.file_name.lower().endswith(".pdf"):
@@ -205,10 +203,10 @@ async def confirm_upload(
         mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     elif payload.file_name.lower().endswith(".txt"):
         mime_type = "text/plain"
-    
+
     # Generate download URL for file_url field
     file_url = s3_service.generate_presigned_download_url(payload.file_key, expires=86400)
-    
+
     # Create document record
     document = Document(
         course_id=payload.course_id,
@@ -222,20 +220,23 @@ async def confirm_upload(
         file_size_bytes=payload.file_size_bytes,
         parse_status=ParseStatus.PENDING,
     )
-    
+
     db.add(document)
     await db.commit()
     await db.refresh(document)
-    
+
     # Trigger document processing task
     try:
         process_document.delay(str(document.id))
     except Exception as exc:
         # Log but don't fail the request if task queue is down
         import structlog
+
         logger = structlog.get_logger(__name__)
-        logger.error("failed_to_queue_document_processing", document_id=str(document.id), error=str(exc))
-    
+        logger.error(
+            "failed_to_queue_document_processing", document_id=str(document.id), error=str(exc)
+        )
+
     return DocumentOut.model_validate(document)
 
 
@@ -250,25 +251,25 @@ async def get_document_status(
     db: AsyncSession = Depends(get_db),
 ) -> DocumentStatusOut:
     """Get the current processing status of a document."""
-    
+
     result = await db.execute(select(Document).where(Document.id == document_id))
     document = result.scalar_one_or_none()
-    
+
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
-    
+
     # Verify access
     await _verify_course_access(document.course_id, current_user, db)
-    
+
     # Count chunks
     chunk_count_result = await db.execute(
         select(func.count()).where(DocumentChunk.document_id == document_id)
     )
     chunk_count = chunk_count_result.scalar_one()
-    
+
     return DocumentStatusOut(
         id=document.id,
         file_name=document.file_name,
@@ -289,16 +290,16 @@ async def delete_document(
     settings: Settings = Depends(get_settings),
 ) -> None:
     """Delete a document (professor only)."""
-    
+
     result = await db.execute(select(Document).where(Document.id == document_id))
     document = result.scalar_one_or_none()
-    
+
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
-    
+
     # Verify professor owns the course
     course_result = await db.execute(
         select(Course).where(
@@ -311,7 +312,7 @@ async def delete_document(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the course professor can delete documents",
         )
-    
+
     # Delete the object from S3 using the stored file_key (source of truth).
     # Older rows may lack a file_key; skip S3 deletion rather than guessing a key.
     if document.file_key:
@@ -343,7 +344,7 @@ async def delete_document(
 
 @router.get(
     "/courses/{course_id}/documents",
-    response_model=List[DocumentOut],
+    response_model=list[DocumentOut],
     summary="List documents for a course",
 )
 async def list_course_documents(
@@ -351,12 +352,12 @@ async def list_course_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> List[DocumentOut]:
+) -> list[DocumentOut]:
     """List all documents for a course (professor or enrolled student)."""
-    
+
     # Verify course access
     await _verify_course_access(course_id, current_user, db)
-    
+
     # Fetch documents
     result = await db.execute(
         select(Document)
@@ -364,11 +365,11 @@ async def list_course_documents(
         .order_by(Document.doc_type, Document.created_at.desc())
     )
     documents = result.scalars().all()
-    
+
     # Regenerate fresh download URLs from file_key so listing never returns an
     # expired link (the stored file_url expires 24h after upload).
     s3_service = get_s3_service(settings)
-    out: List[DocumentOut] = []
+    out: list[DocumentOut] = []
     for doc in documents:
         fresh_url = _fresh_download_url(s3_service, doc.file_key, doc.file_url)
         out.append(DocumentOut.model_validate(doc).model_copy(update={"file_url": fresh_url}))

@@ -1,15 +1,16 @@
 import uuid
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_current_student, get_current_professor, get_db
-from app.core.config import get_settings, Settings
-from app.core.enums import DocumentType, ParseStatus, SubmissionStatus, EnrollmentStatus
+from app.core.config import Settings, get_settings
+from app.core.deps import get_current_professor, get_current_student, get_db
+from app.core.enums import DocumentType, EnrollmentStatus, ParseStatus, SubmissionStatus
+from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment
 from app.models.course import Course
 from app.models.document import Document
@@ -23,11 +24,7 @@ from app.schemas.submission import (
     SubmissionWithStudent,
 )
 from app.services.s3_service import get_s3_service
-from app.infrastructure.chromadb_client import ChromaDBClient
-from app.models.document_chunk import DocumentChunk
 from app.tasks.grading import process_document
-
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -52,14 +49,18 @@ async def _cleanup_previous_submission_artifacts(
         rather than being blocked by a stale (possibly manual) grade.
     """
     old_docs = (
-        await db.execute(
-            select(Document).where(
-                Document.assignment_id == assignment_id,
-                Document.uploader_id == student_id,
-                Document.doc_type == DocumentType.SUBMISSION,
+        (
+            await db.execute(
+                select(Document).where(
+                    Document.assignment_id == assignment_id,
+                    Document.uploader_id == student_id,
+                    Document.doc_type == DocumentType.SUBMISSION,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for od in old_docs:
         try:
@@ -75,9 +76,7 @@ async def _cleanup_previous_submission_artifacts(
         await db.delete(od)  # DocumentChunk rows cascade
 
     existing_eval = (
-        await db.execute(
-            select(Evaluation).where(Evaluation.submission_id == submission_id)
-        )
+        await db.execute(select(Evaluation).where(Evaluation.submission_id == submission_id))
     ).scalar_one_or_none()
     if existing_eval:
         await db.delete(existing_eval)
@@ -155,14 +154,11 @@ async def create_submission(
 
     # Check if assignment due date has passed. Normalize to UTC-aware so the
     # comparison never mixes naive/aware datetimes (some backends return naive).
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     due_date = assignment.due_date
     if due_date.tzinfo is None:
-        due_date = due_date.replace(tzinfo=timezone.utc)
-    if due_date < now:
-        submission_status = SubmissionStatus.LATE
-    else:
-        submission_status = SubmissionStatus.SUBMITTED
+        due_date = due_date.replace(tzinfo=UTC)
+    submission_status = SubmissionStatus.LATE if due_date < now else SubmissionStatus.SUBMITTED
 
     # Verify file exists in S3
     s3_service = get_s3_service(settings)
@@ -211,7 +207,7 @@ async def create_submission(
         existing_submission.file_url = file_url
         existing_submission.file_key = payload.file_key
         existing_submission.file_name = payload.file_name
-        existing_submission.submitted_at = datetime.now(timezone.utc)
+        existing_submission.submitted_at = datetime.now(UTC)
         existing_submission.status = submission_status
         await db.commit()
         await db.refresh(existing_submission)
@@ -238,7 +234,7 @@ async def create_submission(
         doc_type=DocumentType.SUBMISSION,
         file_name=payload.file_name,
         file_url=file_url,
-        file_key=payload.file_key,                   # fixed: was missing entirely
+        file_key=payload.file_key,  # fixed: was missing entirely
         mime_type=_get_mime_type(payload.file_name),  # fixed: was hardcoded to application/pdf
         file_size_bytes=payload.file_size_bytes,
         parse_status=ParseStatus.PENDING,
@@ -275,9 +271,7 @@ async def get_my_submission(
 ) -> SubmissionOut:
     """Get the student's own submission for an assignment."""
 
-    assignment_result = await db.execute(
-        select(Assignment).where(Assignment.id == assignment_id)
-    )
+    assignment_result = await db.execute(select(Assignment).where(Assignment.id == assignment_id))
     assignment = assignment_result.scalar_one_or_none()
 
     if not assignment:
@@ -323,7 +317,7 @@ async def get_my_submission(
 
 @router.get(
     "/{assignment_id}/all",
-    response_model=List[SubmissionWithStudent],
+    response_model=list[SubmissionWithStudent],
     summary="Get all submissions for an assignment",
 )
 async def get_all_submissions(
@@ -331,7 +325,7 @@ async def get_all_submissions(
     professor: User = Depends(get_current_professor),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> List[SubmissionWithStudent]:
+) -> list[SubmissionWithStudent]:
     """Get all submissions for an assignment (professor only)."""
 
     assignment_result = await db.execute(

@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,10 +11,10 @@ class PresignRequest(BaseModel):
     content_type: str = Field(min_length=1, max_length=127)
     doc_type: DocumentType
     course_id: uuid.UUID
-    assignment_id: Optional[uuid.UUID] = None
+    assignment_id: uuid.UUID | None = None
     # Client-declared size for fast-fail before issuing an upload URL. The
     # authoritative size check happens against the actual object at confirm time.
-    file_size_bytes: Optional[int] = Field(default=None, gt=0)
+    file_size_bytes: int | None = Field(default=None, gt=0)
 
 
 class PresignResponse(BaseModel):
@@ -30,7 +29,7 @@ class ConfirmUploadRequest(BaseModel):
     file_size_bytes: int = Field(gt=0)
     doc_type: DocumentType
     course_id: uuid.UUID
-    assignment_id: Optional[uuid.UUID] = None
+    assignment_id: uuid.UUID | None = None
 
 
 class DocumentOut(BaseModel):
@@ -38,7 +37,7 @@ class DocumentOut(BaseModel):
 
     id: uuid.UUID
     course_id: uuid.UUID
-    assignment_id: Optional[uuid.UUID]
+    assignment_id: uuid.UUID | None
     uploader_id: uuid.UUID
     doc_type: DocumentType
     file_name: str

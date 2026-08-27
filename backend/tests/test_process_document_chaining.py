@@ -7,9 +7,10 @@ chain.
 Runs the real process_document task via eager .apply() with S3/ChromaDB mocked
 and a real SQLite DB (same harness as the retry tests).
 """
+
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -69,21 +70,43 @@ def _seed(session_factory, grading_mode: GradingMode, doc_type: DocumentType) ->
     document_id = uuid.uuid4()
     session = session_factory()
     try:
-        session.add(Assignment(
-            id=assignment_id, course_id=course_id, title="A", description="d",
-            due_date=datetime.now(timezone.utc) + timedelta(days=1),
-            max_score=Decimal("100"), grading_mode=grading_mode, is_active=True,
-        ))
-        session.add(Submission(
-            id=submission_id, assignment_id=assignment_id, student_id=student_id,
-            file_url="http://x/a.pdf", file_name="a.pdf", status=SubmissionStatus.SUBMITTED,
-        ))
-        session.add(Document(
-            id=document_id, course_id=course_id, assignment_id=assignment_id,
-            uploader_id=student_id, doc_type=doc_type, file_name="a.pdf",
-            file_url="http://x/a.pdf", file_key="k/a.pdf", mime_type="application/pdf",
-            file_size_bytes=100, parse_status=ParseStatus.PENDING,
-        ))
+        session.add(
+            Assignment(
+                id=assignment_id,
+                course_id=course_id,
+                title="A",
+                description="d",
+                due_date=datetime.now(UTC) + timedelta(days=1),
+                max_score=Decimal("100"),
+                grading_mode=grading_mode,
+                is_active=True,
+            )
+        )
+        session.add(
+            Submission(
+                id=submission_id,
+                assignment_id=assignment_id,
+                student_id=student_id,
+                file_url="http://x/a.pdf",
+                file_name="a.pdf",
+                status=SubmissionStatus.SUBMITTED,
+            )
+        )
+        session.add(
+            Document(
+                id=document_id,
+                course_id=course_id,
+                assignment_id=assignment_id,
+                uploader_id=student_id,
+                doc_type=doc_type,
+                file_name="a.pdf",
+                file_url="http://x/a.pdf",
+                file_key="k/a.pdf",
+                mime_type="application/pdf",
+                file_size_bytes=100,
+                parse_status=ParseStatus.PENDING,
+            )
+        )
         session.commit()
     finally:
         session.close()

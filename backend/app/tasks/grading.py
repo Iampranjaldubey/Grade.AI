@@ -1,8 +1,8 @@
 """
 Celery tasks for document processing and grading.
 """
+
 import uuid
-from typing import Any
 
 import structlog
 
@@ -31,7 +31,7 @@ def process_submission(self, submission_id: str) -> dict:
 def evaluate_submission(self, submission_id: str) -> dict:
     """
     Evaluate a student submission using AI grading.
-    
+
     Pipeline:
     1. Load submission and related data from database
     2. Check if document is fully processed
@@ -39,16 +39,16 @@ def evaluate_submission(self, submission_id: str) -> dict:
     4. Call AI evaluator (Gemini) to grade
     5. Store evaluation results in database
     6. Update submission status
-    
+
     Args:
         submission_id: UUID string of the submission
-        
+
     Returns:
         Dict with evaluation results
     """
     from datetime import datetime
     from decimal import Decimal
-    
+
     from app.core.config import get_settings
     from app.core.enums import ParseStatus, SubmissionStatus
     from app.db.sync_session import get_sync_db
@@ -61,51 +61,59 @@ def evaluate_submission(self, submission_id: str) -> dict:
     from app.rag.embeddings import embedding_service
     from app.rag.evaluator import GradingEvaluator
     from app.rag.retrieval import RetrievalService
-    
+
     settings = get_settings()
     logger.info("evaluate_submission_started", submission_id=submission_id)
-    
+
     try:
         # Step 1: Load submission and related data
         with get_sync_db() as db:
-            submission = db.query(Submission).filter(
-                Submission.id == uuid.UUID(submission_id)
-            ).first()
-            
+            submission = (
+                db.query(Submission).filter(Submission.id == uuid.UUID(submission_id)).first()
+            )
+
             if not submission:
                 logger.error("submission_not_found", submission_id=submission_id)
                 raise ValueError(f"Submission {submission_id} not found")
-            
+
             # Load assignment and rubrics
-            assignment = db.query(Assignment).filter(
-                Assignment.id == submission.assignment_id
-            ).first()
-            
+            assignment = (
+                db.query(Assignment).filter(Assignment.id == submission.assignment_id).first()
+            )
+
             if not assignment:
                 raise ValueError(f"Assignment {submission.assignment_id} not found")
-            
-            rubrics = db.query(Rubric).filter(
-                Rubric.assignment_id == assignment.id
-            ).order_by(Rubric.created_at).all()
-            
+
+            rubrics = (
+                db.query(Rubric)
+                .filter(Rubric.assignment_id == assignment.id)
+                .order_by(Rubric.created_at)
+                .all()
+            )
+
             if not rubrics:
                 logger.warning("no_rubrics_found", assignment_id=str(assignment.id))
                 raise ValueError("Cannot evaluate: no rubrics defined for this assignment")
-            
+
             course_id = assignment.course_id
-            
+
             # Step 2: Find the document for this submission
             # Submission creates a Document with doc_type=submission
-            document = db.query(Document).filter(
-                Document.uploader_id == submission.student_id,
-                Document.assignment_id == assignment.id,
-                Document.doc_type == "submission",
-            ).order_by(Document.created_at.desc()).first()
-            
+            document = (
+                db.query(Document)
+                .filter(
+                    Document.uploader_id == submission.student_id,
+                    Document.assignment_id == assignment.id,
+                    Document.doc_type == "submission",
+                )
+                .order_by(Document.created_at.desc())
+                .first()
+            )
+
             if not document:
                 logger.error("submission_document_not_found", submission_id=submission_id)
                 raise ValueError("Submission document not found")
-            
+
             # Check if document is fully processed
             if document.parse_status != ParseStatus.SUCCESS:
                 if document.parse_status == ParseStatus.FAILED:
@@ -114,12 +122,12 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     # Still processing - retry after 60s
                     logger.info("document_still_processing", document_id=str(document.id))
                     raise self.retry(countdown=60, max_retries=5)
-            
+
             if not document.parsed_text:
                 raise ValueError("Document has no parsed text")
-            
+
             submission_text = document.parsed_text
-            
+
             logger.info(
                 "submission_loaded",
                 submission_id=submission_id,
@@ -127,13 +135,13 @@ def evaluate_submission(self, submission_id: str) -> dict:
                 course_id=str(course_id),
                 text_length=len(submission_text),
             )
-        
+
         # Step 3: Retrieve context
         chroma_client = ChromaDBClient(settings)
         chroma_client.connect()
-        
+
         retrieval_service = RetrievalService(chroma_client, embedding_service)
-        
+
         with get_sync_db() as db:
             retrieval_result = retrieval_service.retrieve_context(
                 submission_text=submission_text,
@@ -141,43 +149,43 @@ def evaluate_submission(self, submission_id: str) -> dict:
                 course_id=course_id,
                 db_session=db,
             )
-        
+
         logger.info(
             "context_retrieved",
             rubric_chunks=len(retrieval_result.rubric_chunks),
             notes_chunks=len(retrieval_result.notes_chunks),
             sample_chunks=len(retrieval_result.sample_chunks),
         )
-        
+
         # Step 4: Evaluate with AI
         evaluator = GradingEvaluator(settings)
-        
+
         evaluation_result = evaluator.evaluate(
             submission_text=submission_text,
             rubrics=rubrics,
             retrieval_result=retrieval_result,
             assignment=assignment,
         )
-        
+
         logger.info(
             "ai_evaluation_completed",
             submission_id=submission_id,
             total_score=evaluation_result.total_score,
             confidence=evaluation_result.confidence_score,
         )
-        
+
         # Step 5: Store evaluation in database
         with get_sync_db() as db:
             # Re-load assignment to access grading_mode
-            assignment_obj = db.query(Assignment).filter(
-                Assignment.id == assignment.id
-            ).first()
-            
+            assignment_obj = db.query(Assignment).filter(Assignment.id == assignment.id).first()
+
             # Check if evaluation already exists
-            existing_eval = db.query(Evaluation).filter(
-                Evaluation.submission_id == uuid.UUID(submission_id)
-            ).first()
-            
+            existing_eval = (
+                db.query(Evaluation)
+                .filter(Evaluation.submission_id == uuid.UUID(submission_id))
+                .first()
+            )
+
             if existing_eval:
                 # Guard against overwriting manual evaluations
                 if existing_eval.ai_score is None:
@@ -192,7 +200,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
                         "status": "skipped",
                         "reason": "manual_evaluation_exists",
                     }
-                
+
                 # Update existing evaluation
                 existing_eval.ai_score = Decimal(str(evaluation_result.total_score))
                 existing_eval.ai_feedback = {
@@ -213,29 +221,36 @@ def evaluate_submission(self, submission_id: str) -> dict:
                         "source_name": chunk.source_name,
                     }
                     for chunk in (
-                        retrieval_result.rubric_chunks +
-                        retrieval_result.notes_chunks +
-                        retrieval_result.sample_chunks
+                        retrieval_result.rubric_chunks
+                        + retrieval_result.notes_chunks
+                        + retrieval_result.sample_chunks
                     )
                 ]
                 existing_eval.evaluated_at = datetime.utcnow()
-                
+
                 # Auto-approve if grading mode is AUTO.
                 # Never auto-approve a fallback evaluation (AI grading failed entirely,
                 # placeholder 50% score) - it must be held for professor review.
-                if assignment_obj.grading_mode == GradingMode.AUTO and not evaluation_result.is_fallback:
+                if (
+                    assignment_obj.grading_mode == GradingMode.AUTO
+                    and not evaluation_result.is_fallback
+                ):
                     existing_eval.approval_status = ApprovalStatus.APPROVED
                     existing_eval.final_score = existing_eval.ai_score
                     existing_eval.approved_at = datetime.utcnow()
                     # approved_by left as NULL for system auto-approvals
-                    
+
                     logger.info(
                         "evaluation_auto_approved",
                         evaluation_id=str(existing_eval.id),
                         grading_mode=assignment_obj.grading_mode.value,
                     )
-                elif assignment_obj.grading_mode == GradingMode.AUTO and evaluation_result.is_fallback:
-                    # Held as pending despite AUTO mode - surfaces in professor's pending review list.
+                elif (
+                    assignment_obj.grading_mode == GradingMode.AUTO
+                    and evaluation_result.is_fallback
+                ):
+                    # Held as pending despite AUTO mode; surfaces in the
+                    # professor's pending review list.
                     existing_eval.approval_status = ApprovalStatus.PENDING
                     logger.warning(
                         "fallback_evaluation_held_for_review",
@@ -243,7 +258,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
                         submission_id=submission_id,
                         grading_mode=assignment_obj.grading_mode.value,
                     )
-                
+
                 logger.info("evaluation_updated", evaluation_id=str(existing_eval.id))
             else:
                 # Create new evaluation
@@ -268,14 +283,14 @@ def evaluate_submission(self, submission_id: str) -> dict:
                             "source_name": chunk.source_name,
                         }
                         for chunk in (
-                            retrieval_result.rubric_chunks +
-                            retrieval_result.notes_chunks +
-                            retrieval_result.sample_chunks
+                            retrieval_result.rubric_chunks
+                            + retrieval_result.notes_chunks
+                            + retrieval_result.sample_chunks
                         )
                     ],
                     evaluated_at=datetime.utcnow(),
                 )
-                
+
                 # Auto-approve if grading mode is AUTO.
                 # Never auto-approve a fallback evaluation (AI grading failed entirely,
                 # placeholder 50% score) - it must be held for professor review.
@@ -288,10 +303,10 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     evaluation.final_score = evaluation.ai_score
                     evaluation.approved_at = datetime.utcnow()
                     # approved_by left as NULL for system auto-approvals
-                
+
                 db.add(evaluation)
                 db.flush()
-                
+
                 # Log after flush so we have evaluation.id
                 if auto_approved:
                     logger.info(
@@ -299,33 +314,36 @@ def evaluate_submission(self, submission_id: str) -> dict:
                         evaluation_id=str(evaluation.id),
                         grading_mode=assignment_obj.grading_mode.value,
                     )
-                elif assignment_obj.grading_mode == GradingMode.AUTO and evaluation_result.is_fallback:
+                elif (
+                    assignment_obj.grading_mode == GradingMode.AUTO
+                    and evaluation_result.is_fallback
+                ):
                     logger.warning(
                         "fallback_evaluation_held_for_review",
                         evaluation_id=str(evaluation.id),
                         submission_id=submission_id,
                         grading_mode=assignment_obj.grading_mode.value,
                     )
-                
+
                 logger.info("evaluation_created", evaluation_id=str(evaluation.id))
-            
+
             # Step 6: Update submission status
-            submission = db.query(Submission).filter(
-                Submission.id == uuid.UUID(submission_id)
-            ).first()
+            submission = (
+                db.query(Submission).filter(Submission.id == uuid.UUID(submission_id)).first()
+            )
             submission.status = SubmissionStatus.EVALUATED
-            
+
             db.commit()
-        
+
         logger.info("evaluate_submission_completed", submission_id=submission_id)
-        
+
         return {
             "submission_id": submission_id,
             "status": "evaluated",
             "total_score": evaluation_result.total_score,
             "confidence_score": evaluation_result.confidence_score,
         }
-        
+
     except Exception as exc:
         logger.error(
             "evaluate_submission_failed",
@@ -333,12 +351,12 @@ def evaluate_submission(self, submission_id: str) -> dict:
             error=str(exc),
             attempt=self.request.retries + 1,
         )
-        
+
         # Retry with exponential backoff
         if self.request.retries < self.max_retries:
-            countdown = 60 * (2 ** self.request.retries)  # 60s, 120s, 240s
+            countdown = 60 * (2**self.request.retries)  # 60s, 120s, 240s
             logger.info("retrying_evaluation", countdown=countdown)
-            raise self.retry(exc=exc, countdown=countdown)
+            raise self.retry(exc=exc, countdown=countdown) from exc
         else:
             logger.error("max_retries_exceeded_evaluation", submission_id=submission_id)
             raise
@@ -355,34 +373,34 @@ def process_document(self, document_id: str) -> dict:
     5. Store chunks in database
     6. Store embeddings in ChromaDB
     7. Update document parse_status
-    
+
     This task is idempotent and can be retried on failure.
-    
+
     Args:
         document_id: UUID string of the document to process
-        
+
     Returns:
         Dict with processing results
-        
+
     Raises:
         Exception: If processing fails after max_retries
     """
     settings = get_settings()
     logger.info("process_document_started", document_id=document_id)
-    
+
     try:
         # Step 1: Load document from database
         with get_sync_db() as db:
             document = db.query(Document).filter(Document.id == uuid.UUID(document_id)).first()
-            
+
             if not document:
                 logger.error("document_not_found", document_id=document_id)
                 raise ValueError(f"Document {document_id} not found")
-            
+
             # Update status to processing
             document.parse_status = ParseStatus.PROCESSING
             db.commit()
-            
+
             # Extract file info
             file_key = document.file_key
             mime_type = document.mime_type
@@ -390,22 +408,22 @@ def process_document(self, document_id: str) -> dict:
             assignment_id = document.assignment_id
             doc_type = document.doc_type
             uploader_id = document.uploader_id
-            
+
             logger.info(
                 "document_loaded",
                 document_id=document_id,
                 file_key=file_key,
                 mime_type=mime_type,
             )
-        
+
         # Step 2: Download file from S3
         s3_service = S3Service(settings)
-        
+
         # Get the file content directly from S3
         file_bytes = _download_from_s3(s3_service, file_key)
-        
+
         logger.info("file_downloaded", document_id=document_id, size_bytes=len(file_bytes))
-        
+
         # Step 3: Parse text from file
         try:
             extracted_text = parse_document(file_bytes, mime_type)
@@ -414,47 +432,49 @@ def process_document(self, document_id: str) -> dict:
             logger.error("parsing_failed", document_id=document_id, error=str(exc))
             _update_document_status(document_id, ParseStatus.FAILED)
             raise
-        
+
         if not extracted_text or len(extracted_text.strip()) < 10:
             logger.warning("text_too_short", document_id=document_id)
             _update_document_status(document_id, ParseStatus.FAILED)
             raise ValueError("Extracted text is empty or too short")
-        
+
         # Step 4: Update document with parsed text
         # Sanitize text: Remove NULL bytes that PostgreSQL cannot store
-        sanitized_text = extracted_text.replace('\x00', '')
-        
+        sanitized_text = extracted_text.replace("\x00", "")
+
         with get_sync_db() as db:
             document = db.query(Document).filter(Document.id == uuid.UUID(document_id)).first()
             document.parsed_text = sanitized_text
             db.commit()
-        
+
         # Step 5: Chunk the text (use sanitized text)
         chunks = chunk_text(sanitized_text, chunk_size=500, overlap=50)
-        
+
         if not chunks:
             logger.warning("no_chunks_created", document_id=document_id)
             _update_document_status(document_id, ParseStatus.FAILED)
             raise ValueError("No chunks created from text")
-        
+
         logger.info("text_chunked", document_id=document_id, num_chunks=len(chunks))
-        
+
         # Step 6: Generate embeddings for all chunks
         chunk_texts = [chunk["text"] for chunk in chunks]
         embeddings = embedding_service.embed_texts(chunk_texts)
-        
+
         logger.info("embeddings_generated", document_id=document_id, count=len(embeddings))
-        
+
         # Step 7: Store chunks in database with embedding IDs
         chunk_records = []
         embedding_ids = []
-        
+
         # Cleanup existing chunks if retry (makes insert idempotent)
         with get_sync_db() as db:
-            existing_chunks = db.query(DocumentChunk).filter(
-                DocumentChunk.document_id == uuid.UUID(document_id)
-            ).all()
-            
+            existing_chunks = (
+                db.query(DocumentChunk)
+                .filter(DocumentChunk.document_id == uuid.UUID(document_id))
+                .all()
+            )
+
             if existing_chunks:
                 existing_count = len(existing_chunks)
                 logger.warning(
@@ -466,11 +486,11 @@ def process_document(self, document_id: str) -> dict:
                     DocumentChunk.document_id == uuid.UUID(document_id)
                 ).delete()
                 db.commit()
-        
+
         with get_sync_db() as db:
-            for i, chunk in enumerate(chunks):
+            for _i, chunk in enumerate(chunks):
                 embedding_id = str(uuid.uuid4())
-                
+
                 chunk_record = DocumentChunk(
                     document_id=uuid.UUID(document_id),
                     chunk_index=chunk["chunk_index"],
@@ -481,21 +501,21 @@ def process_document(self, document_id: str) -> dict:
                         "char_count": chunk["char_count"],
                     },
                 )
-                
+
                 db.add(chunk_record)
                 chunk_records.append(chunk_record)
                 embedding_ids.append(embedding_id)
-            
+
             db.commit()
             logger.info("chunks_stored_in_db", document_id=document_id, count=len(chunk_records))
-        
+
         # Step 8: Store embeddings in ChromaDB
         chromadb_client = ChromaDBClient(settings)
         chromadb_client.connect()
-        
+
         # Get or create collection for this course
         collection = chromadb_client.get_or_create_collection(course_id)
-        
+
         # Cleanup existing ChromaDB entries if retry (makes add idempotent)
         try:
             chromadb_client.delete_document_chunks(collection.name, document_id)
@@ -507,7 +527,7 @@ def process_document(self, document_id: str) -> dict:
                 document_id=document_id,
                 reason=str(cleanup_exc),
             )
-        
+
         # Prepare metadata for each chunk
         metadatas = [
             {
@@ -519,7 +539,7 @@ def process_document(self, document_id: str) -> dict:
             }
             for chunk in chunks
         ]
-        
+
         # Add chunks to ChromaDB
         chromadb_client.add_chunks(
             collection_name=collection.name,
@@ -528,12 +548,12 @@ def process_document(self, document_id: str) -> dict:
             metadatas=metadatas,
             ids=embedding_ids,
         )
-        
+
         logger.info("chunks_stored_in_chromadb", document_id=document_id, count=len(chunks))
-        
+
         # Step 9: Update document status to SUCCESS
         _update_document_status(document_id, ParseStatus.SUCCESS)
-        
+
         logger.info("process_document_completed", document_id=document_id, num_chunks=len(chunks))
 
         # Step 10: If this is a student submission, chain AI evaluation now that
@@ -546,13 +566,18 @@ def process_document(self, document_id: str) -> dict:
                 from app.models.submission import Submission
 
                 with get_sync_db() as db:
-                    assignment_obj = db.query(Assignment).filter(
-                        Assignment.id == assignment_id
-                    ).first()
-                    submission = db.query(Submission).filter(
-                        Submission.assignment_id == assignment_id,
-                        Submission.student_id == uploader_id,
-                    ).order_by(Submission.submitted_at.desc()).first()
+                    assignment_obj = (
+                        db.query(Assignment).filter(Assignment.id == assignment_id).first()
+                    )
+                    submission = (
+                        db.query(Submission)
+                        .filter(
+                            Submission.assignment_id == assignment_id,
+                            Submission.student_id == uploader_id,
+                        )
+                        .order_by(Submission.submitted_at.desc())
+                        .first()
+                    )
                     grading_mode = assignment_obj.grading_mode if assignment_obj else None
                     submission_id = str(submission.id) if submission else None
 
@@ -571,14 +596,14 @@ def process_document(self, document_id: str) -> dict:
                     document_id=document_id,
                     error=str(chain_exc),
                 )
-        
+
         return {
             "document_id": document_id,
             "status": "success",
             "num_chunks": len(chunks),
             "text_length": len(extracted_text),
         }
-        
+
     except Exception as exc:
         logger.error(
             "process_document_failed",
@@ -586,7 +611,7 @@ def process_document(self, document_id: str) -> dict:
             error=str(exc),
             attempt=self.request.retries + 1,
         )
-        
+
         # Update status to failed (don't let this mask the original exception)
         try:
             _update_document_status(document_id, ParseStatus.FAILED)
@@ -598,12 +623,12 @@ def process_document(self, document_id: str) -> dict:
                 original_error=str(exc),
             )
             # Continue - will surface on next retry if DB truly unreachable
-        
+
         # Retry with exponential backoff (always use ORIGINAL exception)
         if self.request.retries < self.max_retries:
-            countdown = 30 * (2 ** self.request.retries)  # 30s, 60s, 120s
+            countdown = 30 * (2**self.request.retries)  # 30s, 60s, 120s
             logger.info("retrying_document_processing", countdown=countdown)
-            raise self.retry(exc=exc, countdown=countdown)
+            raise self.retry(exc=exc, countdown=countdown) from exc
         else:
             logger.error("max_retries_exceeded", document_id=document_id)
             raise
@@ -612,40 +637,40 @@ def process_document(self, document_id: str) -> dict:
 def _extract_file_key_from_url(file_url: str) -> str:
     """
     Extract S3 file key from presigned URL or file URL.
-    
+
     Args:
         file_url: Full S3 URL (presigned or direct)
-        
+
     Returns:
         File key (path within bucket)
     """
     # Remove query parameters (presigned URL params)
     if "?" in file_url:
         file_url = file_url.split("?")[0]
-    
+
     # Extract path after bucket name
     # Format: http://minio:9000/bucket-name/file/key/path.pdf
     parts = file_url.split("/")
-    
+
     # Find bucket name and get everything after it
     try:
         # Typically: ['http:', '', 'minio:9000', 'bucket-name', 'file', 'key', ...]
         bucket_index = 3  # Index of bucket name
-        file_key = "/".join(parts[bucket_index + 1:])
+        file_key = "/".join(parts[bucket_index + 1 :])
         return file_key
-    except IndexError:
+    except IndexError as exc:
         logger.error("failed_to_extract_file_key", url=file_url)
-        raise ValueError(f"Invalid file URL format: {file_url}")
+        raise ValueError(f"Invalid file URL format: {file_url}") from exc
 
 
 def _download_from_s3(s3_service: S3Service, file_key: str) -> bytes:
     """
     Download file content from S3.
-    
+
     Args:
         s3_service: S3Service instance
         file_key: S3 object key
-        
+
     Returns:
         File content as bytes
     """
@@ -654,7 +679,7 @@ def _download_from_s3(s3_service: S3Service, file_key: str) -> bytes:
             Bucket=s3_service.bucket,
             Key=file_key,
         )
-        file_bytes = response['Body'].read()
+        file_bytes = response["Body"].read()
         return file_bytes
     except Exception as exc:
         logger.error("s3_download_failed", file_key=file_key, error=str(exc))
@@ -664,7 +689,7 @@ def _download_from_s3(s3_service: S3Service, file_key: str) -> bytes:
 def _update_document_status(document_id: str, status: ParseStatus) -> None:
     """
     Update document parse_status in database.
-    
+
     Args:
         document_id: UUID string of the document
         status: New ParseStatus value

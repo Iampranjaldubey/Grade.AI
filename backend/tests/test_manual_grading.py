@@ -7,8 +7,9 @@ Submissions/enrollments are inserted directly via the ORM (bypassing the
 submission HTTP endpoint) to avoid depending on a live S3/MinIO backend,
 which is unrelated to what these tests are verifying.
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -19,7 +20,9 @@ from app.models.enrollment import Enrollment
 from app.models.submission import Submission
 
 
-async def _register(client: AsyncClient, email: str, role: UserRole, name: str = "Test User") -> dict:
+async def _register(
+    client: AsyncClient, email: str, role: UserRole, name: str = "Test User"
+) -> dict:
     response = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": "securepass123", "name": name, "role": role.value},
@@ -49,7 +52,7 @@ async def _create_assignment(
     grading_mode: GradingMode,
     max_score: str = "100",
 ) -> dict:
-    due_date = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    due_date = (datetime.now(UTC) + timedelta(days=7)).isoformat()
     response = await client.post(
         "/api/v1/assignments",
         headers={"Authorization": f"Bearer {token}"},
@@ -91,7 +94,9 @@ async def _enroll_and_submit(
 
 
 @pytest.mark.asyncio
-async def test_manual_evaluation_created_successfully(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_manual_evaluation_created_successfully(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     professor = await _register(client, "prof1@gradeai.com", UserRole.PROFESSOR, "Prof One")
     student = await _register(client, "student1@gradeai.com", UserRole.STUDENT, "Student One")
 
@@ -122,7 +127,9 @@ async def test_manual_evaluation_created_successfully(client: AsyncClient, db_se
 
 
 @pytest.mark.asyncio
-async def test_manual_evaluation_duplicate_returns_409(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_manual_evaluation_duplicate_returns_409(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     professor = await _register(client, "prof2@gradeai.com", UserRole.PROFESSOR, "Prof Two")
     student = await _register(client, "student2@gradeai.com", UserRole.STUDENT, "Student Two")
 
@@ -217,7 +224,9 @@ async def test_manual_evaluation_nonexistent_submission_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_cannot_approve_manual_evaluation(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_cannot_approve_manual_evaluation(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     """
     Manual evaluations are created with approval_status=OVERRIDDEN (not PENDING)
     and ai_score=None, so /approve must reject them regardless of which specific

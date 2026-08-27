@@ -9,9 +9,10 @@ engine. External services (ChromaDB, RetrievalService, GradingEvaluator) are
 patched at their SOURCE modules because evaluate_submission imports them with
 function-local imports.
 """
+
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -86,44 +87,52 @@ def _seed_submission(session_factory, grading_mode: GradingMode) -> str:
 
     session = session_factory()
     try:
-        session.add(Assignment(
-            id=assignment_id,
-            course_id=course_id,
-            title="Essay",
-            description="desc",
-            due_date=datetime.now(timezone.utc) + timedelta(days=1),
-            max_score=Decimal("100"),
-            grading_mode=grading_mode,
-            is_active=True,
-        ))
-        session.add(Rubric(
-            assignment_id=assignment_id,
-            criteria_name="Content",
-            description="d",
-            max_points=Decimal("100"),
-            weight=Decimal("100"),
-        ))
-        session.add(Submission(
-            id=submission_id,
-            assignment_id=assignment_id,
-            student_id=student_id,
-            file_url="http://example.com/a.pdf",
-            file_name="a.pdf",
-            status=SubmissionStatus.SUBMITTED,
-        ))
-        session.add(Document(
-            course_id=course_id,
-            assignment_id=assignment_id,
-            uploader_id=student_id,
-            doc_type=DocumentType.SUBMISSION,
-            file_name="a.pdf",
-            file_url="http://example.com/a.pdf",
-            file_key="k/a.pdf",
-            mime_type="application/pdf",
-            file_size_bytes=100,
-            parsed_text="This is the student's parsed submission text for grading.",
-            parse_status=ParseStatus.SUCCESS,
-        ))
+        session.add(
+            Assignment(
+                id=assignment_id,
+                course_id=course_id,
+                title="Essay",
+                description="desc",
+                due_date=datetime.now(UTC) + timedelta(days=1),
+                max_score=Decimal("100"),
+                grading_mode=grading_mode,
+                is_active=True,
+            )
+        )
+        session.add(
+            Rubric(
+                assignment_id=assignment_id,
+                criteria_name="Content",
+                description="d",
+                max_points=Decimal("100"),
+                weight=Decimal("100"),
+            )
+        )
+        session.add(
+            Submission(
+                id=submission_id,
+                assignment_id=assignment_id,
+                student_id=student_id,
+                file_url="http://example.com/a.pdf",
+                file_name="a.pdf",
+                status=SubmissionStatus.SUBMITTED,
+            )
+        )
+        session.add(
+            Document(
+                course_id=course_id,
+                assignment_id=assignment_id,
+                uploader_id=student_id,
+                doc_type=DocumentType.SUBMISSION,
+                file_name="a.pdf",
+                file_url="http://example.com/a.pdf",
+                file_key="k/a.pdf",
+                mime_type="application/pdf",
+                file_size_bytes=100,
+                parsed_text="This is the student's parsed submission text for grading.",
+                parse_status=ParseStatus.SUCCESS,
+            )
+        )
         session.commit()
     finally:
         session.close()
@@ -135,7 +144,9 @@ def _patch_evaluator(monkeypatch, *, is_fallback: bool) -> None:
         total_score=50.0 if is_fallback else 88.0,
         max_score=100.0,
         percentage=50.0 if is_fallback else 88.0,
-        criteria_scores=[{"criterion_name": "Content", "awarded": 50.0, "max": 100.0, "reasoning": "x"}],
+        criteria_scores=[
+            {"criterion_name": "Content", "awarded": 50.0, "max": 100.0, "reasoning": "x"}
+        ],
         strengths=["s"],
         weaknesses=["w"],
         missing_topics=[],
@@ -152,16 +163,16 @@ def _patch_evaluator(monkeypatch, *, is_fallback: bool) -> None:
 def _load_evaluation(session_factory, submission_id: str) -> Evaluation:
     session = session_factory()
     try:
-        return session.query(Evaluation).filter(
-            Evaluation.submission_id == uuid.UUID(submission_id)
-        ).first()
+        return (
+            session.query(Evaluation)
+            .filter(Evaluation.submission_id == uuid.UUID(submission_id))
+            .first()
+        )
     finally:
         session.close()
 
 
-def test_fallback_not_auto_approved_in_auto_mode(
-    monkeypatch, sync_session_factory
-) -> None:
+def test_fallback_not_auto_approved_in_auto_mode(monkeypatch, sync_session_factory) -> None:
     """A fallback evaluation in AUTO mode must stay PENDING, not APPROVED."""
     _patch_evaluator(monkeypatch, is_fallback=True)
     submission_id = _seed_submission(sync_session_factory, GradingMode.AUTO)
@@ -191,9 +202,7 @@ def test_genuine_evaluation_still_auto_approved_in_auto_mode(
     assert evaluation.ai_feedback["is_fallback"] is False
 
 
-def test_fallback_in_hybrid_mode_stays_pending(
-    monkeypatch, sync_session_factory
-) -> None:
+def test_fallback_in_hybrid_mode_stays_pending(monkeypatch, sync_session_factory) -> None:
     """HYBRID never auto-approves anyway; a fallback there is still pending and flagged."""
     _patch_evaluator(monkeypatch, is_fallback=True)
     submission_id = _seed_submission(sync_session_factory, GradingMode.HYBRID)

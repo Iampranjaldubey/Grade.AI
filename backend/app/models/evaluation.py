@@ -7,13 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, Text
 from sqlalchemy.dialects.postgresql import UUID
-
-from app.db.types import FlexibleJSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ApprovalStatus
-from app.db.types import pg_enum
 from app.db.session import Base
+from app.db.types import FlexibleJSON, pg_enum
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
@@ -52,11 +50,13 @@ class Evaluation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=ApprovalStatus.PENDING.value,
         index=True,
     )
-    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    submission: Mapped["Submission"] = relationship("Submission", back_populates="evaluation")
-    approved_by_user: Mapped["User | None"] = relationship(
+    submission: Mapped[Submission] = relationship("Submission", back_populates="evaluation")
+    approved_by_user: Mapped[User | None] = relationship(
         "User",
         back_populates="evaluations_approved",
         foreign_keys=[approved_by],

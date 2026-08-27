@@ -2,6 +2,7 @@
 Test for Finding #14: CORS is scoped to specific methods/headers rather than
 wildcarding while credentials are enabled.
 """
+
 import pytest
 from httpx import AsyncClient
 

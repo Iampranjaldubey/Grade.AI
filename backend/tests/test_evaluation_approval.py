@@ -10,8 +10,9 @@ already-actioned case; the atomic WHERE guard is the true race backstop).
 A PENDING AI evaluation is inserted directly via the ORM (there's no API to create
 one without a live Celery worker + Gemini).
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -51,7 +52,7 @@ async def _create_course(client: AsyncClient, token: str, code: str) -> dict:
 
 
 async def _create_assignment(client: AsyncClient, token: str, course_id: str) -> dict:
-    due = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    due = (datetime.now(UTC) + timedelta(days=7)).isoformat()
     resp = await client.post(
         "/api/v1/assignments",
         headers={"Authorization": f"Bearer {token}"},
@@ -71,11 +72,13 @@ async def _seed_pending_evaluation(
     db_session: AsyncSession, course_id: str, assignment_id: str, student_id: str
 ) -> str:
     """Insert an active enrollment, a submission, and a PENDING AI evaluation."""
-    db_session.add(Enrollment(
-        course_id=uuid.UUID(course_id),
-        student_id=uuid.UUID(student_id),
-        status=EnrollmentStatus.ACTIVE,
-    ))
+    db_session.add(
+        Enrollment(
+            course_id=uuid.UUID(course_id),
+            student_id=uuid.UUID(student_id),
+            status=EnrollmentStatus.ACTIVE,
+        )
+    )
     submission = Submission(
         assignment_id=uuid.UUID(assignment_id),
         student_id=uuid.UUID(student_id),
@@ -101,7 +104,9 @@ async def _seed_pending_evaluation(
 
 
 @pytest.mark.asyncio
-async def test_approve_pending_evaluation_succeeds(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_approve_pending_evaluation_succeeds(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     prof = await _register(client, "p_ap1@gradeai.com", UserRole.PROFESSOR)
     student = await _register(client, "s_ap1@gradeai.com", UserRole.STUDENT)
     token = prof["access_token"]
@@ -150,7 +155,9 @@ async def test_double_approve_is_rejected(client: AsyncClient, db_session: Async
 
 
 @pytest.mark.asyncio
-async def test_override_pending_evaluation_succeeds(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_override_pending_evaluation_succeeds(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     prof = await _register(client, "p_ov1@gradeai.com", UserRole.PROFESSOR)
     student = await _register(client, "s_ov1@gradeai.com", UserRole.STUDENT)
     token = prof["access_token"]
@@ -173,7 +180,9 @@ async def test_override_pending_evaluation_succeeds(client: AsyncClient, db_sess
 
 
 @pytest.mark.asyncio
-async def test_approve_then_override_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_approve_then_override_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     """Once approved, a subsequent override on the same row must not clobber it."""
     prof = await _register(client, "p_ov2@gradeai.com", UserRole.PROFESSOR)
     student = await _register(client, "s_ov2@gradeai.com", UserRole.STUDENT)
@@ -208,7 +217,9 @@ async def test_approve_then_override_is_rejected(client: AsyncClient, db_session
 
 
 @pytest.mark.asyncio
-async def test_override_exceeding_max_score_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_override_exceeding_max_score_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     prof = await _register(client, "p_ov3@gradeai.com", UserRole.PROFESSOR)
     student = await _register(client, "s_ov3@gradeai.com", UserRole.STUDENT)
     token = prof["access_token"]

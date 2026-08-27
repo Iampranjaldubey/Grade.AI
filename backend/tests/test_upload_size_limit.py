@@ -8,16 +8,15 @@ Tests for Finding #11 fix: uploads are capped at settings.max_upload_size_bytes.
 
 The S3 layer is mocked for the confirm test so no live MinIO is required.
 """
+
 import uuid
 from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.enums import DocumentType, UserRole
-from app.models.course import Course
 
 
 async def _register(client: AsyncClient, email: str, role: UserRole, name: str = "U") -> dict:
@@ -61,9 +60,7 @@ async def test_presign_rejects_oversized_declared_size(client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_confirm_rejects_oversized_actual_object(
-    client: AsyncClient, monkeypatch
-) -> None:
+async def test_confirm_rejects_oversized_actual_object(client: AsyncClient, monkeypatch) -> None:
     prof = await _register(client, "p_sz2@gradeai.com", UserRole.PROFESSOR)
     token = prof["access_token"]
     course = await _create_course(client, token, "SZ2")
@@ -74,9 +71,7 @@ async def test_confirm_rejects_oversized_actual_object(
     fake_s3 = MagicMock()
     fake_s3.file_exists.return_value = True
     fake_s3.get_file_size.return_value = cap + 1
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.uploads.get_s3_service", lambda settings: fake_s3
-    )
+    monkeypatch.setattr("app.api.v1.endpoints.uploads.get_s3_service", lambda settings: fake_s3)
 
     resp = await client.post(
         "/api/v1/uploads/confirm",
@@ -104,9 +99,7 @@ async def test_confirm_accepts_within_limit(client: AsyncClient, monkeypatch) ->
     fake_s3.file_exists.return_value = True
     fake_s3.get_file_size.return_value = 2048  # well under the cap
     fake_s3.generate_presigned_download_url.return_value = "http://example.com/dl"
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.uploads.get_s3_service", lambda settings: fake_s3
-    )
+    monkeypatch.setattr("app.api.v1.endpoints.uploads.get_s3_service", lambda settings: fake_s3)
 
     resp = await client.post(
         "/api/v1/uploads/confirm",

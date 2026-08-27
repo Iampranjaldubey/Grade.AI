@@ -1,7 +1,7 @@
 from typing import Any
 
 
-class AppException(Exception):
+class AppException(Exception):  # noqa: N818 - intentional base name, subclasses are *Error
     """Application-level error with an HTTP status and machine-readable code."""
 
     def __init__(

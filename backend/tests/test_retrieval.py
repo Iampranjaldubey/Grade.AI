@@ -7,6 +7,7 @@ ChromaDBClient and EmbeddingService are mocked; these tests only verify
 the arguments RetrievalService passes to chroma.query(), not ChromaDB
 itself.
 """
+
 import uuid
 from unittest.mock import MagicMock
 
@@ -48,7 +49,8 @@ def test_rubric_query_uses_n_results_5(mock_chroma, mock_embeddings, mock_db_ses
     )
 
     rubric_call = next(
-        call for call in mock_chroma.query.call_args_list
+        call
+        for call in mock_chroma.query.call_args_list
         if call.kwargs["where_filter"].get("$and", [{}])[0].get("doc_type") == "rubric"
     )
     assert rubric_call.kwargs["n_results"] == 5
@@ -64,13 +66,16 @@ def test_notes_query_uses_n_results_5(mock_chroma, mock_embeddings, mock_db_sess
     )
 
     notes_call = next(
-        call for call in mock_chroma.query.call_args_list
+        call
+        for call in mock_chroma.query.call_args_list
         if call.kwargs["where_filter"].get("doc_type") == "notes"
     )
     assert notes_call.kwargs["n_results"] == 5
 
 
-def test_sample_solution_query_uses_n_results_3(mock_chroma, mock_embeddings, mock_db_session) -> None:
+def test_sample_solution_query_uses_n_results_3(
+    mock_chroma, mock_embeddings, mock_db_session
+) -> None:
     service = RetrievalService(mock_chroma, mock_embeddings)
     service.retrieve_context(
         submission_text="student answer",
@@ -80,7 +85,8 @@ def test_sample_solution_query_uses_n_results_3(mock_chroma, mock_embeddings, mo
     )
 
     sample_call = next(
-        call for call in mock_chroma.query.call_args_list
+        call
+        for call in mock_chroma.query.call_args_list
         if call.kwargs["where_filter"].get("$and", [{}])[0].get("doc_type") == "sample_solution"
     )
     assert sample_call.kwargs["n_results"] == 3
@@ -100,7 +106,8 @@ def test_rubric_filter_uses_and_with_doc_type_and_assignment_id(
     )
 
     rubric_call = next(
-        call for call in mock_chroma.query.call_args_list
+        call
+        for call in mock_chroma.query.call_args_list
         if call.kwargs["where_filter"].get("$and", [{}])[0].get("doc_type") == "rubric"
     )
     conditions = rubric_call.kwargs["where_filter"]["$and"]
@@ -121,7 +128,8 @@ def test_sample_solution_filter_uses_and_with_doc_type_and_assignment_id(
     )
 
     sample_call = next(
-        call for call in mock_chroma.query.call_args_list
+        call
+        for call in mock_chroma.query.call_args_list
         if call.kwargs["where_filter"].get("$and", [{}])[0].get("doc_type") == "sample_solution"
     )
     conditions = sample_call.kwargs["where_filter"]["$and"]
@@ -142,7 +150,8 @@ def test_notes_filter_has_no_assignment_id_condition(
     )
 
     notes_call = next(
-        call for call in mock_chroma.query.call_args_list
+        call
+        for call in mock_chroma.query.call_args_list
         if call.kwargs["where_filter"].get("doc_type") == "notes"
     )
     assert notes_call.kwargs["where_filter"] == {"doc_type": "notes"}

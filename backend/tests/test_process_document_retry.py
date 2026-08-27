@@ -10,6 +10,7 @@ External dependencies (S3, ChromaDB) are mocked; the database is a real
 SQLite engine created fresh per test so the DocumentChunk unique constraint
 on (document_id, chunk_index) is genuinely enforced.
 """
+
 import uuid
 from contextlib import contextmanager
 from unittest.mock import MagicMock
@@ -127,9 +128,11 @@ def test_first_attempt_succeeds_with_no_cleanup_needed(
 
     session = sync_session_factory()
     try:
-        chunks = session.query(DocumentChunk).filter(
-            DocumentChunk.document_id == uuid.UUID(sample_document)
-        ).all()
+        chunks = (
+            session.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == uuid.UUID(sample_document))
+            .all()
+        )
         assert len(chunks) == result["num_chunks"]
         assert len(chunks) > 1  # sanity check that our sample text produced multiple chunks
         doc = session.query(Document).filter(Document.id == uuid.UUID(sample_document)).first()
@@ -169,9 +172,11 @@ def test_retry_after_chromadb_failure_does_not_hit_integrity_error(
 
     session = sync_session_factory()
     try:
-        chunks = session.query(DocumentChunk).filter(
-            DocumentChunk.document_id == uuid.UUID(sample_document)
-        ).all()
+        chunks = (
+            session.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == uuid.UUID(sample_document))
+            .all()
+        )
         # Exactly one set of chunks should exist — not doubled, not zero.
         assert len(chunks) == result["num_chunks"]
         chunk_indexes = sorted(c.chunk_index for c in chunks)
@@ -194,20 +199,24 @@ def test_cleanup_deletes_chunks_left_by_previous_failed_attempt(
     # Simulate a prior failed attempt that left 2 stale chunks behind.
     session = sync_session_factory()
     try:
-        session.add(DocumentChunk(
-            document_id=uuid.UUID(sample_document),
-            chunk_index=0,
-            chunk_text="stale chunk 0",
-            token_count=5,
-            embedding_id=str(uuid.uuid4()),
-        ))
-        session.add(DocumentChunk(
-            document_id=uuid.UUID(sample_document),
-            chunk_index=1,
-            chunk_text="stale chunk 1",
-            token_count=5,
-            embedding_id=str(uuid.uuid4()),
-        ))
+        session.add(
+            DocumentChunk(
+                document_id=uuid.UUID(sample_document),
+                chunk_index=0,
+                chunk_text="stale chunk 0",
+                token_count=5,
+                embedding_id=str(uuid.uuid4()),
+            )
+        )
+        session.add(
+            DocumentChunk(
+                document_id=uuid.UUID(sample_document),
+                chunk_index=1,
+                chunk_text="stale chunk 1",
+                token_count=5,
+                embedding_id=str(uuid.uuid4()),
+            )
+        )
         session.commit()
     finally:
         session.close()
@@ -221,9 +230,11 @@ def test_cleanup_deletes_chunks_left_by_previous_failed_attempt(
 
     session = sync_session_factory()
     try:
-        chunks = session.query(DocumentChunk).filter(
-            DocumentChunk.document_id == uuid.UUID(sample_document)
-        ).all()
+        chunks = (
+            session.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == uuid.UUID(sample_document))
+            .all()
+        )
         # Stale chunk_text from the fake prior attempt must be gone.
         texts = {c.chunk_text for c in chunks}
         assert "stale chunk 0" not in texts

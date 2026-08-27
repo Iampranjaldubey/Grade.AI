@@ -1,7 +1,8 @@
 from enum import StrEnum
 from typing import TypeVar
 
-from sqlalchemy import JSON, Enum as SAEnum
+from sqlalchemy import JSON
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 
 E = TypeVar("E", bound=StrEnum)

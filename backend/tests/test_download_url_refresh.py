@@ -6,8 +6,9 @@ must not serve that stale value when a file_key is available.
 
 S3 presigning is mocked so no live MinIO is required.
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -42,7 +43,7 @@ async def _create_course(client: AsyncClient, token: str, code: str) -> dict:
 
 
 async def _create_assignment(client: AsyncClient, token: str, course_id: str) -> dict:
-    due = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    due = (datetime.now(UTC) + timedelta(days=7)).isoformat()
     resp = await client.post(
         "/api/v1/assignments",
         headers={"Authorization": f"Bearer {token}"},
@@ -59,22 +60,30 @@ async def _create_assignment(client: AsyncClient, token: str, course_id: str) ->
 
 
 async def _seed_submission(
-    db_session: AsyncSession, course_id: str, assignment_id: str, student_id: str,
-    *, file_key: str | None,
+    db_session: AsyncSession,
+    course_id: str,
+    assignment_id: str,
+    student_id: str,
+    *,
+    file_key: str | None,
 ) -> None:
-    db_session.add(Enrollment(
-        course_id=uuid.UUID(course_id),
-        student_id=uuid.UUID(student_id),
-        status=EnrollmentStatus.ACTIVE,
-    ))
-    db_session.add(Submission(
-        assignment_id=uuid.UUID(assignment_id),
-        student_id=uuid.UUID(student_id),
-        file_url=STALE_URL,          # simulates the expired snapshot stored at upload time
-        file_key=file_key,
-        file_name="a.pdf",
-        status=SubmissionStatus.SUBMITTED,
-    ))
+    db_session.add(
+        Enrollment(
+            course_id=uuid.UUID(course_id),
+            student_id=uuid.UUID(student_id),
+            status=EnrollmentStatus.ACTIVE,
+        )
+    )
+    db_session.add(
+        Submission(
+            assignment_id=uuid.UUID(assignment_id),
+            student_id=uuid.UUID(student_id),
+            file_url=STALE_URL,  # simulates the expired snapshot stored at upload time
+            file_key=file_key,
+            file_name="a.pdf",
+            status=SubmissionStatus.SUBMITTED,
+        )
+    )
     await db_session.commit()
 
 
@@ -96,7 +105,10 @@ async def test_my_submission_returns_freshly_signed_url(
     course = await _create_course(client, prof["access_token"], "URL1")
     assignment = await _create_assignment(client, prof["access_token"], course["id"])
     await _seed_submission(
-        db_session, course["id"], assignment["id"], student["user"]["id"],
+        db_session,
+        course["id"],
+        assignment["id"],
+        student["user"]["id"],
         file_key="URL1/submission/abc_a.pdf",
     )
 
@@ -120,7 +132,10 @@ async def test_all_submissions_returns_freshly_signed_urls(
     course = await _create_course(client, prof["access_token"], "URL2")
     assignment = await _create_assignment(client, prof["access_token"], course["id"])
     await _seed_submission(
-        db_session, course["id"], assignment["id"], student["user"]["id"],
+        db_session,
+        course["id"],
+        assignment["id"],
+        student["user"]["id"],
         file_key="URL2/submission/def_a.pdf",
     )
 
@@ -144,7 +159,10 @@ async def test_legacy_submission_without_file_key_falls_back_to_stored_url(
     course = await _create_course(client, prof["access_token"], "URL3")
     assignment = await _create_assignment(client, prof["access_token"], course["id"])
     await _seed_submission(
-        db_session, course["id"], assignment["id"], student["user"]["id"],
+        db_session,
+        course["id"],
+        assignment["id"],
+        student["user"]["id"],
         file_key=None,
     )
 

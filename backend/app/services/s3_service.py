@@ -1,7 +1,7 @@
 import boto3
+import structlog
 from botocore.client import Config
 from botocore.exceptions import ClientError
-import structlog
 
 from app.core.config import Settings
 
@@ -20,9 +20,7 @@ class S3Service:
         # to the internal endpoint — which is correct when backend == browser host,
         # but WRONG if your backend reaches MinIO via a Docker service name like
         # "http://minio:9000" while your browser needs "http://localhost:9000".
-        public_endpoint = (
-            getattr(settings, "aws_s3_public_endpoint", None) or internal_endpoint
-        )
+        public_endpoint = getattr(settings, "aws_s3_public_endpoint", None) or internal_endpoint
 
         self.bucket = settings.aws_s3_bucket
 

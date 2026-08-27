@@ -3,15 +3,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import GradingMode
-from app.db.types import pg_enum
 from app.db.session import Base
+from app.db.types import pg_enum
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
@@ -39,20 +39,22 @@ class Assignment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
-    course: Mapped["Course"] = relationship("Course", back_populates="assignments")
-    rubrics: Mapped[List["Rubric"]] = relationship(
+    course: Mapped[Course] = relationship("Course", back_populates="assignments")
+    rubrics: Mapped[list[Rubric]] = relationship(
         "Rubric",
         back_populates="assignment",
         cascade="all, delete-orphan",
     )
-    documents: Mapped[List["Document"]] = relationship(
+    documents: Mapped[list[Document]] = relationship(
         "Document",
         back_populates="assignment",
         foreign_keys="Document.assignment_id",
     )
-    submissions: Mapped[List["Submission"]] = relationship(
+    submissions: Mapped[list[Submission]] = relationship(
         "Submission",
         back_populates="assignment",
         cascade="all, delete-orphan",

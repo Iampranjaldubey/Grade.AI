@@ -125,9 +125,8 @@ class Settings(BaseSettings):
             if not self.aws_s3_bucket:
                 errors.append("AWS_S3_BUCKET is required in production")
 
-        if self.is_development or self.is_production:
-            if not self.database_url:
-                errors.append("DATABASE_URL is required")
+        if (self.is_development or self.is_production) and not self.database_url:
+            errors.append("DATABASE_URL is required")
 
         if errors:
             raise ValueError("Configuration validation failed:\n- " + "\n- ".join(errors))

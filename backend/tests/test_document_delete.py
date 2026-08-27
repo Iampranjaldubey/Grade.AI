@@ -3,6 +3,7 @@ Tests for NEW-1: delete_document must delete the S3 object using the stored
 file_key (not a key reconstructed by parsing the URL) and must remove the
 document's embeddings from ChromaDB so vectors don't orphan.
 """
+
 import uuid
 from unittest.mock import MagicMock
 
@@ -72,9 +73,7 @@ async def test_delete_uses_stored_file_key_and_cleans_chromadb(
     token = prof["access_token"]
     course = await _create_course(client, token, "DEL1")
     stored_key = f"{course['id']}/notes/{uuid.uuid4()}_notes.pdf"
-    doc_id = await _seed_document(
-        db_session, course["id"], prof["user"]["id"], file_key=stored_key
-    )
+    doc_id = await _seed_document(db_session, course["id"], prof["user"]["id"], file_key=stored_key)
 
     resp = await client.delete(
         f"/api/v1/uploads/{doc_id}",
@@ -85,9 +84,7 @@ async def test_delete_uses_stored_file_key_and_cleans_chromadb(
     # S3 deletion uses the exact stored key, not a reconstructed one.
     s3.delete_file.assert_called_once_with(stored_key)
     # ChromaDB embeddings for this document are removed.
-    chroma.delete_document_chunks.assert_called_once_with(
-        f"gradeai_{course['id']}", doc_id
-    )
+    chroma.delete_document_chunks.assert_called_once_with(f"gradeai_{course['id']}", doc_id)
 
 
 @pytest.mark.asyncio
@@ -98,9 +95,7 @@ async def test_delete_without_file_key_skips_s3_but_still_deletes(
     prof = await _register(client, "p_del2@gradeai.com", UserRole.PROFESSOR)
     token = prof["access_token"]
     course = await _create_course(client, token, "DEL2")
-    doc_id = await _seed_document(
-        db_session, course["id"], prof["user"]["id"], file_key=None
-    )
+    doc_id = await _seed_document(db_session, course["id"], prof["user"]["id"], file_key=None)
 
     resp = await client.delete(
         f"/api/v1/uploads/{doc_id}",

@@ -2,8 +2,9 @@
 Synchronous SQLAlchemy session for Celery tasks.
 Celery tasks cannot use async database operations.
 """
+
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 import structlog
 from sqlalchemy import create_engine, text
@@ -55,14 +56,14 @@ def get_sync_db() -> Generator[Session, None, None]:
     """
     Context manager for synchronous database sessions.
     Used in Celery tasks.
-    
+
     Usage:
         with get_sync_db() as db:
             document = db.query(Document).filter_by(id=doc_id).first()
             document.parse_status = ParseStatus.SUCCESS
             db.commit()
     """
-    SessionLocal = get_sync_session_factory()
+    SessionLocal = get_sync_session_factory()  # noqa: N806 - SQLAlchemy factory convention
     session = SessionLocal()
     try:
         yield session

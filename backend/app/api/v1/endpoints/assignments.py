@@ -1,13 +1,12 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, get_db, get_current_professor
+from app.core.deps import get_current_professor, get_current_user, get_db
 from app.core.enums import ApprovalStatus, EnrollmentStatus, SubmissionStatus
 from app.models.assignment import Assignment
 from app.models.course import Course
@@ -32,9 +31,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
-async def _get_professor_course(
-    course_id: uuid.UUID, professor: User, db: AsyncSession
-) -> Course:
+async def _get_professor_course(course_id: uuid.UUID, professor: User, db: AsyncSession) -> Course:
     result = await db.execute(
         select(Course).where(Course.id == course_id, Course.professor_id == professor.id)
     )
@@ -72,9 +69,7 @@ async def _has_evaluated_submissions(assignment_id: uuid.UUID, db: AsyncSession)
         .join(Evaluation, Evaluation.submission_id == Submission.id)
         .where(
             Submission.assignment_id == assignment_id,
-            Evaluation.approval_status.in_(
-                [ApprovalStatus.APPROVED, ApprovalStatus.OVERRIDDEN]
-            ),
+            Evaluation.approval_status.in_([ApprovalStatus.APPROVED, ApprovalStatus.OVERRIDDEN]),
         )
     )
     return result.scalar_one() > 0
@@ -113,8 +108,8 @@ async def create_assignment(
     # Validate due_date is in the future
     due_date = payload.due_date
     if due_date.tzinfo is None:
-        due_date = due_date.replace(tzinfo=timezone.utc)
-    if due_date <= datetime.now(tz=timezone.utc):
+        due_date = due_date.replace(tzinfo=UTC)
+    if due_date <= datetime.now(tz=UTC):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="due_date must be in the future",
@@ -137,7 +132,7 @@ async def create_assignment(
 
 @router.get(
     "",
-    response_model=List[AssignmentListOut],
+    response_model=list[AssignmentListOut],
     summary="List assignments for a course",
 )
 async def list_assignments(
@@ -146,7 +141,7 @@ async def list_assignments(
     size: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> List[AssignmentListOut]:
+) -> list[AssignmentListOut]:
     from app.core.enums import UserRole  # avoid circular at module level
 
     # Verify the course exists and the user has access to it
@@ -185,6 +180,7 @@ async def list_assignments(
     )
     assignments = result.scalars().all()
     return [await _assignment_with_submission_count(db, a) for a in assignments]
+
 
 @router.get(
     "/{assignment_id}",
@@ -266,7 +262,7 @@ async def update_assignment(
         )
 
     updates = payload.model_dump(exclude_unset=True)
-    if "due_date" in updates and updates["due_date"] <= datetime.now(tz=timezone.utc):
+    if "due_date" in updates and updates["due_date"] <= datetime.now(tz=UTC):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="due_date must be in the future",
@@ -285,10 +281,11 @@ async def update_assignment(
                 Submission.status.in_([SubmissionStatus.SUBMITTED, SubmissionStatus.LATE]),
             )
         )
+
         def _as_utc(dt: datetime) -> datetime:
             # Some backends (e.g. SQLite) return naive datetimes; treat as UTC
             # so the comparison never mixes naive and aware values.
-            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
         new_due = _as_utc(assignment.due_date)
         for sub in subs_result.scalars().all():
@@ -334,7 +331,7 @@ rubrics_router = APIRouter()
 
 @router.post(
     "/{assignment_id}/rubrics",
-    response_model=List[RubricOut],
+    response_model=list[RubricOut],
     status_code=status.HTTP_201_CREATED,
     summary="Replace all rubrics for an assignment",
 )
@@ -343,7 +340,7 @@ async def create_rubrics(
     payload: RubricListCreate,
     professor: User = Depends(get_current_professor),
     db: AsyncSession = Depends(get_db),
-) -> List[RubricOut]:
+) -> list[RubricOut]:
     assignment = await _get_assignment_with_ownership(assignment_id, professor, db)
 
     # Validate the rubric criteria's max_points sum to the assignment's max_score.
@@ -361,9 +358,7 @@ async def create_rubrics(
         )
 
     # Delete existing rubrics
-    existing = await db.execute(
-        select(Rubric).where(Rubric.assignment_id == assignment.id)
-    )
+    existing = await db.execute(select(Rubric).where(Rubric.assignment_id == assignment.id))
     for rubric in existing.scalars().all():
         await db.delete(rubric)
 
@@ -390,14 +385,14 @@ async def create_rubrics(
 
 @router.get(
     "/{assignment_id}/rubrics",
-    response_model=List[RubricOut],
+    response_model=list[RubricOut],
     summary="List rubrics for an assignment",
 )
 async def list_rubrics(
     assignment_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> List[RubricOut]:
+) -> list[RubricOut]:
     from app.core.enums import UserRole  # avoid circular at module level
 
     result = await db.execute(

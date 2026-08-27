@@ -3,8 +3,9 @@ Test for Finding #15: editing an assignment's due_date recomputes the on-time/
 late status of existing not-yet-evaluated submissions, instead of leaving a stale
 'late' flag frozen from submission time.
 """
+
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -18,8 +19,12 @@ from app.models.submission import Submission
 async def _prof_with_assignment(client: AsyncClient, code: str, due_days: int) -> tuple[str, str]:
     reg = await client.post(
         "/api/v1/auth/register",
-        json={"email": f"{code}@gradeai.com", "password": "securepass123",
-              "name": "P", "role": UserRole.PROFESSOR.value},
+        json={
+            "email": f"{code}@gradeai.com",
+            "password": "securepass123",
+            "name": "P",
+            "role": UserRole.PROFESSOR.value,
+        },
     )
     token = reg.json()["access_token"]
     course = await client.post(
@@ -27,12 +32,17 @@ async def _prof_with_assignment(client: AsyncClient, code: str, due_days: int) -
         headers={"Authorization": f"Bearer {token}"},
         json={"course_name": "C", "course_code": code, "semester": "F26"},
     )
-    due = (datetime.now(timezone.utc) + timedelta(days=due_days)).isoformat()
+    due = (datetime.now(UTC) + timedelta(days=due_days)).isoformat()
     assignment = await client.post(
         "/api/v1/assignments",
         headers={"Authorization": f"Bearer {token}"},
-        json={"course_id": course.json()["id"], "title": "A", "due_date": due,
-              "max_score": "100", "grading_mode": GradingMode.HYBRID.value},
+        json={
+            "course_id": course.json()["id"],
+            "title": "A",
+            "due_date": due,
+            "max_score": "100",
+            "grading_mode": GradingMode.HYBRID.value,
+        },
     )
     return token, assignment.json()["id"]
 
@@ -49,7 +59,7 @@ async def test_extending_due_date_flips_late_submission_to_on_time(
         student_id=uuid.uuid4(),
         file_url="http://x/a.pdf",
         file_name="a.pdf",
-        submitted_at=datetime.now(timezone.utc) - timedelta(days=10),
+        submitted_at=datetime.now(UTC) - timedelta(days=10),
         status=SubmissionStatus.LATE,
     )
     db_session.add(sub)
@@ -57,7 +67,7 @@ async def test_extending_due_date_flips_late_submission_to_on_time(
     await db_session.refresh(sub)
 
     # Extend the due date to the future; submitted_at (10 days ago) now precedes it.
-    new_due = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    new_due = (datetime.now(UTC) + timedelta(days=30)).isoformat()
     resp = await client.put(
         f"/api/v1/assignments/{aid}",
         headers={"Authorization": f"Bearer {token}"},
@@ -80,7 +90,7 @@ async def test_update_without_due_date_change_leaves_status(
         student_id=uuid.uuid4(),
         file_url="http://x/a.pdf",
         file_name="a.pdf",
-        submitted_at=datetime.now(timezone.utc) - timedelta(days=10),
+        submitted_at=datetime.now(UTC) - timedelta(days=10),
         status=SubmissionStatus.LATE,
     )
     db_session.add(sub)
