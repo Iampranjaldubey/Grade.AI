@@ -25,7 +25,9 @@ class ChromaDBClient:
         self._settings = settings
         self._base_url = settings.chromadb_url
         self._http: httpx.AsyncClient | None = None
-        self._client: chromadb.HttpClient | None = None
+        # chromadb's client is a dynamically-typed factory result (ClientAPI);
+        # annotate as Any so mypy doesn't treat the HttpClient factory as a type.
+        self._client: Any = None
 
     @property
     def http(self) -> httpx.AsyncClient:
@@ -35,7 +37,7 @@ class ChromaDBClient:
         return self._http
 
     @property
-    def client(self) -> chromadb.HttpClient:
+    def client(self) -> Any:
         """Synchronous ChromaDB client for Celery tasks."""
         if self._client is None:
             self.connect()
@@ -142,7 +144,7 @@ class ChromaDBClient:
         Raises:
             ValueError: If list lengths don't match
         """
-        if not all(len(chunks) == len(x) for x in [embeddings, metadatas, ids]):
+        if not (len(chunks) == len(embeddings) == len(metadatas) == len(ids)):
             raise ValueError("All input lists must have the same length")
 
         if not chunks:

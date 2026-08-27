@@ -34,11 +34,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 class AccessLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         start = time.perf_counter()
-        response: Response | None = None
         status_code = 500
 
         try:
-            response = await call_next(request)
+            response: Response = await call_next(request)
             status_code = response.status_code
             return response
         finally:

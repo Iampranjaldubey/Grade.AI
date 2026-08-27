@@ -135,7 +135,7 @@ def chunk_text_by_sentences(text: str, chunk_size: int = 500, overlap: int = 50)
 
     chunks = []
     chunk_index = 0
-    current_chunk = []
+    current_chunk: list[str] = []
     current_tokens = 0
 
     for sentence in sentences:
@@ -156,7 +156,7 @@ def chunk_text_by_sentences(text: str, chunk_size: int = 500, overlap: int = 50)
 
             # Keep last few sentences for overlap
             overlap_tokens = 0
-            overlap_sentences = []
+            overlap_sentences: list[str] = []
             for sent in reversed(current_chunk):
                 sent_tokens = count_tokens(sent)
                 if overlap_tokens + sent_tokens <= overlap:

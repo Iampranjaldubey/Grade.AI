@@ -118,7 +118,7 @@ class GradingEvaluator:
 
         # Parse response
         try:
-            result_dict = self._parse_response(response_text, assignment.max_score)
+            result_dict = self._parse_response(response_text, float(assignment.max_score))
 
             # Validate criteria count matches
             if len(result_dict["criteria_scores"]) != len(rubrics):
@@ -366,7 +366,7 @@ Return JSON only:
 """
 
             response = self.model.generate_content(simple_prompt)
-            result_dict = self._parse_response(response.text, assignment.max_score)
+            result_dict = self._parse_response(response.text, float(assignment.max_score))
 
             sources = list(
                 {

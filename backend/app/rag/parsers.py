@@ -77,7 +77,8 @@ def parse_docx(file_bytes: bytes) -> str:
             text = paragraph.text.strip()
             if text:
                 # Add extra newline before headings for hierarchy
-                if paragraph.style.name.startswith("Heading"):
+                style = paragraph.style
+                if style is not None and (style.name or "").startswith("Heading"):
                     text_parts.append(f"\n{text}\n")
                 else:
                     text_parts.append(text)

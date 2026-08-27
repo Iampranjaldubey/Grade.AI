@@ -178,6 +178,10 @@ def evaluate_submission(self, submission_id: str) -> dict:
         with get_sync_db() as db:
             # Re-load assignment to access grading_mode
             assignment_obj = db.query(Assignment).filter(Assignment.id == assignment.id).first()
+            if assignment_obj is None:
+                # Assignment was deleted between the earlier load and this
+                # re-fetch; nothing sensible to store the evaluation against.
+                raise ValueError(f"Assignment {assignment.id} no longer exists")
 
             # Check if evaluation already exists
             existing_eval = (
@@ -328,10 +332,12 @@ def evaluate_submission(self, submission_id: str) -> dict:
                 logger.info("evaluation_created", evaluation_id=str(evaluation.id))
 
             # Step 6: Update submission status
-            submission = (
+            submission_obj = (
                 db.query(Submission).filter(Submission.id == uuid.UUID(submission_id)).first()
             )
-            submission.status = SubmissionStatus.EVALUATED
+            if submission_obj is None:
+                raise ValueError(f"Submission {submission_id} no longer exists")
+            submission_obj.status = SubmissionStatus.EVALUATED
 
             db.commit()
 
@@ -444,6 +450,8 @@ def process_document(self, document_id: str) -> dict:
 
         with get_sync_db() as db:
             document = db.query(Document).filter(Document.id == uuid.UUID(document_id)).first()
+            if document is None:
+                raise ValueError(f"Document {document_id} no longer exists")
             document.parsed_text = sanitized_text
             db.commit()
 

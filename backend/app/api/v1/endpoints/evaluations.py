@@ -237,7 +237,7 @@ async def approve_evaluation(
         "evaluation_approved",
         evaluation_id=str(evaluation_id),
         professor_id=str(current_user.id),
-        final_score=float(evaluation.final_score),
+        final_score=float(evaluation.final_score) if evaluation.final_score is not None else None,
     )
 
     return EvaluationOut.model_validate(evaluation)
@@ -338,7 +338,7 @@ async def override_evaluation(
         evaluation_id=str(evaluation_id),
         professor_id=str(current_user.id),
         ai_score=float(evaluation.ai_score) if evaluation.ai_score is not None else None,
-        final_score=float(evaluation.final_score),
+        final_score=float(evaluation.final_score) if evaluation.final_score is not None else None,
     )
 
     return EvaluationOut.model_validate(evaluation)
@@ -437,7 +437,7 @@ async def create_manual_evaluation(
         evaluation_id=str(evaluation.id),
         submission_id=str(submission_id),
         professor_id=str(current_user.id),
-        final_score=float(evaluation.final_score),
+        final_score=float(evaluation.final_score) if evaluation.final_score is not None else None,
     )
 
     return EvaluationOut.model_validate(evaluation)
@@ -519,7 +519,10 @@ async def get_student_evaluation(
     result = await db.execute(query)
     evaluation = result.scalar_one_or_none()
 
-    if not evaluation:
+    if not evaluation or evaluation.final_score is None:
+        # final_score is always set by the time an evaluation reaches APPROVED
+        # or OVERRIDDEN (see approve/override/manual endpoints), so this also
+        # guards against any unexpected data inconsistency.
         raise HTTPException(
             status_code=404,
             detail="No approved evaluation found for this submission",
