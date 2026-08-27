@@ -255,5 +255,15 @@ export interface HealthResponse {
   environment: string;
 }
 
+export interface AnalyticsOverview {
+  total_courses: number;
+  total_students: number;
+  total_assignments: number;
+  total_submissions: number;
+  submissions_graded: number;
+  pending_evaluations: number;
+  average_score: number;
+}
+
 // Legacy alias
 export type User = UserOut;

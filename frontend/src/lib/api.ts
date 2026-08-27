@@ -117,6 +117,19 @@ apiClient.interceptors.response.use(
 );
 
 // ---------------------------------------------------------------------------
+// Analytics API
+// ---------------------------------------------------------------------------
+
+export async function getAnalyticsOverview(): Promise<
+  import("@/types").AnalyticsOverview
+> {
+  const { data } = await apiClient.get<import("@/types").AnalyticsOverview>(
+    "/analytics"
+  );
+  return data;
+}
+
+// ---------------------------------------------------------------------------
 // Error handling
 // ---------------------------------------------------------------------------
 

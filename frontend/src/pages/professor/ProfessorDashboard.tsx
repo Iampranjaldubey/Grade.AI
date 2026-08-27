@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { BookOpen, FileText, Users, CheckCircle, Plus } from "lucide-react";
+import { BookOpen, FileText, Users, CheckCircle, Plus, Award } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { ProfessorLayout } from "@/components/ProfessorLayout";
@@ -17,9 +17,10 @@ export function ProfessorDashboard() {
     queryFn: () => api.listCourses({ page: 1, size: 3 }),
   });
 
-  const totalCourses = courses.length;
-  const totalAssignments = courses.reduce((sum, c) => sum + c.assignment_count, 0);
-  const totalStudents = courses.reduce((sum, c) => sum + c.student_count, 0);
+  const { data: analytics } = useQuery({
+    queryKey: ["analytics-overview"],
+    queryFn: () => api.getAnalyticsOverview(),
+  });
 
   return (
     <ProfessorLayout>
@@ -37,26 +38,48 @@ export function ProfessorDashboard() {
           <StatCard
             icon={<BookOpen className="w-6 h-6" />}
             label="Total Courses"
-            value={totalCourses}
+            value={analytics?.total_courses ?? 0}
             color="bg-blue-500"
           />
           <StatCard
             icon={<FileText className="w-6 h-6" />}
             label="Total Assignments"
-            value={totalAssignments}
+            value={analytics?.total_assignments ?? 0}
             color="bg-green-500"
           />
           <StatCard
             icon={<Users className="w-6 h-6" />}
             label="Total Students"
-            value={totalStudents}
+            value={analytics?.total_students ?? 0}
             color="bg-purple-500"
           />
           <StatCard
             icon={<CheckCircle className="w-6 h-6" />}
             label="Pending Evaluations"
-            value={0}
+            value={analytics?.pending_evaluations ?? 0}
             color="bg-amber-500"
+          />
+        </div>
+
+        {/* Grading summary */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <StatCard
+            icon={<FileText className="w-6 h-6" />}
+            label="Total Submissions"
+            value={analytics?.total_submissions ?? 0}
+            color="bg-indigo-500"
+          />
+          <StatCard
+            icon={<CheckCircle className="w-6 h-6" />}
+            label="Submissions Graded"
+            value={analytics?.submissions_graded ?? 0}
+            color="bg-teal-500"
+          />
+          <StatCard
+            icon={<Award className="w-6 h-6" />}
+            label="Average Score"
+            value={`${(analytics?.average_score ?? 0).toFixed(1)}%`}
+            color="bg-rose-500"
           />
         </div>
 
@@ -153,7 +176,7 @@ export function ProfessorDashboard() {
 interface StatCardProps {
   icon: React.ReactNode;
   label: string;
-  value: number;
+  value: number | string;
   color: string;
 }
 
