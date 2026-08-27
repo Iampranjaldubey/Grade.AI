@@ -199,7 +199,7 @@ function OverviewTab({
   onCopyCode,
   copiedCode,
 }: {
-  course: any;
+  course: import("@/types").CourseListOut;
   onCopyCode: () => void;
   copiedCode: boolean;
 }) {

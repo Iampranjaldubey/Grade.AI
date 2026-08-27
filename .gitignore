@@ -25,6 +25,11 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
+frontend/lint.json
+frontend/*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+coverage/
 *.log
 npm-debug.log*
 

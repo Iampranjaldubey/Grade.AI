@@ -34,13 +34,13 @@ export function StudentCourseDetailPage() {
   const { data: submissionsMap = {} } = useQuery({
     queryKey: ["allSubmissions", courseId],
     queryFn: async () => {
-      const map: Record<string, any> = {};
+      const map: Record<string, import("@/types").SubmissionOut | null> = {};
       await Promise.all(
         assignments.map(async (assignment) => {
           try {
             const submission = await submissionsApi.getMySubmission(assignment.id);
             map[assignment.id] = submission;
-          } catch (error) {
+          } catch {
             // No submission for this assignment
             map[assignment.id] = null;
           }

@@ -139,7 +139,7 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: true,
             isLoading: false,
           });
-        } catch (error) {
+        } catch {
           // Token invalid, clear auth
           localStorage.removeItem("gradeai_access_token");
           localStorage.removeItem("gradeai_refresh_token");
