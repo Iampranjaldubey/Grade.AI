@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import * as api from "@/lib/api";
-import { submissionsApi, evaluationsApi, uploadsApi } from "@/lib/api";
+import { submissionsApi, evaluationsApi, uploadsApi, getErrorMessage } from "@/lib/api";
 import { StudentLayout } from "@/components/StudentLayout";
 import { DocumentUploadZone } from "@/components/DocumentUploadZone";
 import { formatDateTime, cn } from "@/lib/utils";
@@ -86,9 +86,8 @@ export function AssignmentSubmissionPage() {
       setUploadedFileSize(0);
       setIsResubmitting(false);
     },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to submit assignment";
-      toast.error(message);
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, "Failed to submit assignment"));
     },
   });
 

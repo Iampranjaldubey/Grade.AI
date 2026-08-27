@@ -18,7 +18,7 @@ import {
   Loader2,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { evaluationsApi, submissionsApi } from "@/lib/api";
+import { evaluationsApi, submissionsApi, getErrorMessage } from "@/lib/api";
 import { ProfessorLayout } from "@/components/ProfessorLayout";
 import { formatDateTime, cn } from "@/lib/utils";
 
@@ -61,9 +61,14 @@ export function EvaluationReviewPage() {
       queryClient.invalidateQueries({ queryKey: ["evaluations"] });
       navigate(-1);
     },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to approve grade";
-      toast.error(message);
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, "Failed to approve grade"));
+      // On a concurrent-update conflict, refresh so the professor sees the
+      // current approval state instead of a stale "pending" view.
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 409) {
+        queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
+      }
     },
   });
 
@@ -79,9 +84,12 @@ export function EvaluationReviewPage() {
       queryClient.invalidateQueries({ queryKey: ["evaluations"] });
       navigate(-1);
     },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to override grade";
-      toast.error(message);
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, "Failed to override grade"));
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 409) {
+        queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
+      }
     },
   });
 
@@ -93,9 +101,8 @@ export function EvaluationReviewPage() {
         queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
       }, 3000);
     },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to trigger re-evaluation";
-      toast.error(message);
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, "Failed to trigger re-evaluation"));
     },
   });
 
@@ -154,6 +161,7 @@ export function EvaluationReviewPage() {
 
   const confidence = getConfidenceBadge(evaluation.ai_feedback.confidence_score);
   const isApproved = evaluation.approval_status !== "pending";
+  const isFallback = evaluation.ai_feedback.is_fallback === true;
 
   return (
     <ProfessorLayout>
@@ -227,6 +235,27 @@ export function EvaluationReviewPage() {
                   {confidence.label} Confidence ({(evaluation.ai_feedback.confidence_score * 100).toFixed(0)}%)
                 </span>
               </div>
+
+              {/* Fallback warning: AI grading failed and a placeholder score was
+                  produced. This must be manually reviewed before approval. */}
+              {isFallback && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 mb-2"
+                >
+                  <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900">
+                      Needs manual review
+                    </p>
+                    <p className="text-sm text-amber-800 mt-1">
+                      Automated grading did not complete for this submission, so
+                      this is a placeholder score. Review the submission and
+                      override the grade before approving.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Criteria Breakdown */}

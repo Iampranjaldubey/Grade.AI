@@ -117,6 +117,60 @@ apiClient.interceptors.response.use(
 );
 
 // ---------------------------------------------------------------------------
+// Error handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate an error (typically from axios) into a user-friendly message.
+ *
+ * The backend's custom exception handler returns { code, message, request_id },
+ * while FastAPI's default validation errors use { detail }. This helper handles
+ * both shapes and adds friendly defaults for the status codes the backend added
+ * hardening for:
+ *   - 409 Conflict: an evaluation was already approved/overridden concurrently.
+ *   - 413 Payload Too Large: the uploaded file exceeds the configured size cap.
+ */
+export function getErrorMessage(
+  error: unknown,
+  fallback = "Something went wrong. Please try again."
+): string {
+  const axiosErr = error as AxiosError<ApiError> | undefined;
+  const status = axiosErr?.response?.status;
+  const data = axiosErr?.response?.data;
+
+  // Prefer the backend's explicit message when present.
+  const backendMessage =
+    (data?.message && typeof data.message === "string" && data.message) ||
+    (typeof data?.detail === "string" && data.detail) ||
+    (Array.isArray(data?.detail) && data.detail[0]?.msg) ||
+    undefined;
+
+  if (status === 409) {
+    return (
+      backendMessage ||
+      "This item was already updated by someone else. Refresh to see the latest status."
+    );
+  }
+
+  if (status === 413) {
+    return (
+      backendMessage ||
+      "That file is too large to upload. Please choose a smaller file."
+    );
+  }
+
+  if (backendMessage) {
+    return backendMessage;
+  }
+
+  if (axiosErr?.message) {
+    return axiosErr.message;
+  }
+
+  return fallback;
+}
+
+// ---------------------------------------------------------------------------
 // Auth API
 // ---------------------------------------------------------------------------
 

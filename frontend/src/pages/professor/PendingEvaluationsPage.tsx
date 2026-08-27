@@ -191,6 +191,12 @@ export function PendingEvaluationsPage() {
                           <div className="text-sm font-semibold text-gray-900">
                             {evaluation.ai_score}
                           </div>
+                          {evaluation.is_fallback && (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                              <AlertCircle className="w-3 h-3" />
+                              Needs review
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span

@@ -1,16 +1,21 @@
 import { useState, useCallback, useRef } from "react";
 import { Upload, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
-import { uploadsApi } from "@/lib/api";
+import { uploadsApi, getErrorMessage } from "@/lib/api";
 import type { DocumentType } from "@/types";
 import toast from "react-hot-toast";
 
 type UploadState = "idle" | "uploading" | "processing" | "ready" | "failed";
+
+// Default client-side upload cap. Mirrors the backend MAX_UPLOAD_SIZE_BYTES
+// default (25 MiB) so oversized files are rejected before the network round-trip.
+const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 
 interface DocumentUploadZoneProps {
   accept?: string;
   docType: DocumentType;
   courseId: string;
   assignmentId?: string;
+  maxSizeBytes?: number;
   onSuccess?: (documentId: string, fileKey: string, fileSizeBytes: number) => void;
   onError?: (error: Error) => void;
 }
@@ -20,6 +25,7 @@ export function DocumentUploadZone({
   docType,
   courseId,
   assignmentId,
+  maxSizeBytes = DEFAULT_MAX_UPLOAD_SIZE_BYTES,
   onSuccess,
   onError,
 }: DocumentUploadZoneProps) {
@@ -42,10 +48,17 @@ export function DocumentUploadZone({
       return;
     }
 
+    // Reject oversized files up front to avoid a wasted upload + backend 413.
+    if (file.size > maxSizeBytes) {
+      const limitMb = (maxSizeBytes / (1024 * 1024)).toFixed(0);
+      toast.error(`That file is too large. Maximum upload size is ${limitMb} MB.`);
+      return;
+    }
+
     setSelectedFile(file);
     setState("idle");
     setProgress(0);
-  }, [accept]);
+  }, [accept, maxSizeBytes]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -184,9 +197,9 @@ export function DocumentUploadZone({
     } catch (error) {
       console.error("Upload error:", error);
       setState("failed");
-      const err = error instanceof Error ? error : new Error("Upload failed");
-      toast.error(err.message);
-      onError?.(err);
+      const message = getErrorMessage(error, "Upload failed");
+      toast.error(message);
+      onError?.(error instanceof Error ? error : new Error(message));
     }
   };
 

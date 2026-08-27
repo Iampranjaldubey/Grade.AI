@@ -16,11 +16,17 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
+      // Enforce coverage on the logic layer (API client, error mapping, auth
+      // store, shared utils) where unit tests provide real signal. Page-level
+      // components are covered by routing/smoke tests and are validated end to
+      // end in the Docker CI job rather than chased for line coverage here.
+      include: ["src/lib/**", "src/store/**"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.d.ts"],
       thresholds: {
-        lines: 50,
-        functions: 50,
-        branches: 40,
-        statements: 50,
+        lines: 60,
+        functions: 60,
+        branches: 60,
+        statements: 60,
       },
     },
   },

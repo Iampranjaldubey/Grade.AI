@@ -174,6 +174,7 @@ export interface EvaluationOut {
     }>;
     percentage: number;
     confidence_score: number;
+    is_fallback?: boolean;
   } | null;
   professor_feedback: string | null;
   strengths: string[] | null;
@@ -191,6 +192,7 @@ export interface EvaluationListOut {
   approval_status: ApprovalStatus;
   evaluated_at: string;
   confidence_score: number;
+  is_fallback?: boolean;
   student_name: string;
   student_email: string;
   assignment_title: string;
