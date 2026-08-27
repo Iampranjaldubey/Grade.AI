@@ -25,7 +25,6 @@
         { "name": "DATABASE_URL", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/staging/DATABASE_URL" },
         { "name": "REDIS_URL", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/staging/REDIS_URL" },
         { "name": "JWT_SECRET", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/staging/JWT_SECRET" },
-        { "name": "OPENAI_API_KEY", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/staging/OPENAI_API_KEY" },
         { "name": "GEMINI_API_KEY", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/gradeai/staging/GEMINI_API_KEY" }
       ],
       "logConfiguration": {

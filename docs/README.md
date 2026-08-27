@@ -200,7 +200,6 @@ REFRESH_TOKEN_EXPIRE_DAYS=7
 # AI APIs
 GEMINI_API_KEY=your-google-gemini-api-key
 GEMINI_MODEL=gemini-2.0-flash
-OPENAI_API_KEY=  # Optional, not currently used
 
 # S3/MinIO
 AWS_ACCESS_KEY_ID=minioadmin
