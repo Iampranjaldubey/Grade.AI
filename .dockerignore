@@ -1,0 +1,39 @@
+# Keep Docker build contexts small and reproducible by excluding local
+# virtualenvs, node_modules, caches, and VCS metadata. Dockerfiles copy only
+# backend/ or frontend/ subtrees and install dependencies fresh inside the
+# image, so none of this needs to be sent to the daemon.
+
+.git/
+.github/
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+**/backend/venv/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
+backend/.env
+backend/coverage.xml
+backend/htmlcov/
+backend/.coverage
+
+# Node
+**/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Docs and misc large non-build files
+docs/
+*.md

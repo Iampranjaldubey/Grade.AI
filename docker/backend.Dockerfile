@@ -24,6 +24,16 @@ COPY --from=builder /install /usr/local
 COPY backend/ .
 
 RUN addgroup --system gradeai && adduser --system --ingroup gradeai gradeai
+
+# Give the non-root user a writable HuggingFace/sentence-transformers cache.
+# The web process loads the embedding model lazily (and normally never), but
+# setting this keeps model downloads out of the read-only '/nonexistent' home
+# if any code path does trigger a load.
+ENV HF_HOME=/home/gradeai/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/home/gradeai/.cache/torch/sentence_transformers
+RUN mkdir -p "$HF_HOME" "$SENTENCE_TRANSFORMERS_HOME" \
+    && chown -R gradeai:gradeai /home/gradeai
+
 USER gradeai
 
 EXPOSE 8000
