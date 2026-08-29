@@ -127,5 +127,9 @@ def get_embedding_service() -> EmbeddingService:
     return _embedding_service_instance
 
 
-# Create singleton on module import (for Celery tasks)
-embedding_service = get_embedding_service()
+# NOTE: the model is loaded lazily via get_embedding_service(), NOT at import
+# time. The FastAPI web process imports this module (transitively, via the
+# grading task module wired into the evaluations router) but never generates
+# embeddings itself - only Celery workers do. Eagerly constructing the model on
+# import forced a multi-hundred-MB HuggingFace download during web startup and
+# broke in containers whose non-root user has no writable HF cache.

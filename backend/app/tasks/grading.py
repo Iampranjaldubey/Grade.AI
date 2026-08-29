@@ -14,7 +14,7 @@ from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.rag.chunker import chunk_text
-from app.rag.embeddings import embedding_service
+from app.rag.embeddings import get_embedding_service
 from app.rag.parsers import parse_document
 from app.services.s3_service import S3Service
 
@@ -58,7 +58,6 @@ def evaluate_submission(self, submission_id: str) -> dict:
     from app.models.evaluation import Evaluation
     from app.models.rubric import Rubric
     from app.models.submission import Submission
-    from app.rag.embeddings import embedding_service
     from app.rag.evaluator import GradingEvaluator
     from app.rag.retrieval import RetrievalService
 
@@ -140,7 +139,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
         chroma_client = ChromaDBClient(settings)
         chroma_client.connect()
 
-        retrieval_service = RetrievalService(chroma_client, embedding_service)
+        retrieval_service = RetrievalService(chroma_client, get_embedding_service())
 
         with get_sync_db() as db:
             retrieval_result = retrieval_service.retrieve_context(
@@ -467,7 +466,7 @@ def process_document(self, document_id: str) -> dict:
 
         # Step 6: Generate embeddings for all chunks
         chunk_texts = [chunk["text"] for chunk in chunks]
-        embeddings = embedding_service.embed_texts(chunk_texts)
+        embeddings = get_embedding_service().embed_texts(chunk_texts)
 
         logger.info("embeddings_generated", document_id=document_id, count=len(embeddings))
 

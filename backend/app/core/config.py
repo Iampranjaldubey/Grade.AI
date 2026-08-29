@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from typing import Self
 
@@ -65,8 +66,14 @@ class Settings(BaseSettings):
         alias="CELERY_RESULT_BACKEND",
     )
 
-    cors_origins: list[str] = Field(
-        default=["http://localhost:5173", "http://localhost:3000"],
+    # Stored as a raw comma-separated string, not list[str]. pydantic-settings
+    # tries to JSON-decode any "complex" (list/dict) field sourced from an env
+    # var BEFORE field validators run, so a real env var like
+    # "http://a,http://b" (not JSON) raises SettingsError before
+    # parse_cors_origins ever gets a chance to split it. A plain str field
+    # sidesteps that decode step entirely; cors_origins below does the split.
+    cors_origins_raw: str = Field(
+        default="http://localhost:5173,http://localhost:3000",
         alias="CORS_ORIGINS",
         validation_alias="CORS_ORIGINS",
     )
@@ -80,12 +87,22 @@ class Settings(BaseSettings):
             return value
         return AppEnvironment(str(value).lower())
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins(self) -> list[str]:
+        raw = self.cors_origins_raw.strip()
+        # Accept a JSON array (e.g. '["http://a","http://b"]', as used in
+        # backend/.env) as well as a plain comma-separated string (as used in
+        # .env.example and docker-compose). Either way this runs after
+        # construction, so it never hits pydantic-settings' env-var JSON
+        # auto-decode step that raises on non-JSON input.
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(origin).strip() for origin in parsed if str(origin).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
     @model_validator(mode="after")
     def apply_environment_defaults(self) -> Self:
