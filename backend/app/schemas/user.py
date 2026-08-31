@@ -14,6 +14,9 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(min_length=8, max_length=128)
+    # Required only when registering into a privileged role (professor/TA/admin)
+    # and only when the server has a code configured. See PROFESSOR_REGISTRATION_CODE.
+    registration_code: str | None = Field(default=None, max_length=256)
 
 
 class UserLogin(BaseModel):

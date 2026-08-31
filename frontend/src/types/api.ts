@@ -40,6 +40,11 @@ export interface RegisterPayload {
   email: string;
   password: string;
   role: UserRole;
+  /**
+   * Required to register into a privileged role (professor) when the server has
+   * PROFESSOR_REGISTRATION_CODE configured, which it must be in production.
+   */
+  registration_code?: string;
 }
 
 export interface CourseOut {

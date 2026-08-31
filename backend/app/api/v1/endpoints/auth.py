@@ -1,17 +1,22 @@
 import uuid
+from hmac import compare_digest
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.deps import (
-    BLACKLIST_TTL_SECONDS,
-    REFRESH_TTL_SECONDS,
+    blacklist_ttl_seconds,
     get_current_user,
     get_db,
     get_redis,
+    refresh_ttl_seconds,
 )
+from app.core.enums import UserRole
+from app.core.rate_limit import RateLimiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -30,11 +35,52 @@ from app.schemas.user import (
     UserRead,
 )
 
+logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 LOCKOUT_TTL_SECONDS = 15 * 60
 MAX_LOGIN_ATTEMPTS = 5
-ACCESS_TOKEN_EXPIRES_IN = 900
+
+
+def _access_token_expires_in() -> int:
+    """Seconds until an issued access token expires, per configuration."""
+    return get_settings().access_token_expire_minutes * 60
+
+
+# Roles that can create courses, see other students' work, or grade. These must
+# not be self-assignable from a public endpoint without proof of authorisation.
+PRIVILEGED_ROLES = frozenset({UserRole.PROFESSOR, UserRole.TA, UserRole.ADMIN})
+
+
+def _verify_privileged_role_allowed(payload: UserCreate) -> None:
+    """
+    Reject self-assignment of a privileged role unless the caller supplies the
+    configured registration code.
+
+    When no code is configured the check is skipped, which keeps local
+    development and the test suite frictionless. Production cannot reach that
+    state: ``Settings.validate_required`` refuses to boot without a code set.
+    """
+    if payload.role not in PRIVILEGED_ROLES:
+        return
+
+    expected = get_settings().professor_registration_code
+    if not expected:
+        return
+
+    supplied = (payload.registration_code or "").strip()
+    if not compare_digest(supplied, expected):
+        logger.warning(
+            "privileged_registration_rejected",
+            email=payload.email,
+            requested_role=payload.role.value,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"A valid registration code is required to sign up as a " f"{payload.role.value}."
+            ),
+        )
 
 
 async def _store_refresh_token(redis: Redis, refresh_token: str, user_id: uuid.UUID) -> None:
@@ -45,7 +91,7 @@ async def _store_refresh_token(redis: Redis, refresh_token: str, user_id: uuid.U
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to issue refresh token",
         )
-    await redis.set(f"refresh:{jti}", str(user_id), ex=REFRESH_TTL_SECONDS)
+    await redis.set(f"refresh:{jti}", str(user_id), ex=refresh_ttl_seconds())
 
 
 async def _revoke_refresh_token(redis: Redis, refresh_token: str) -> None:
@@ -60,7 +106,7 @@ def _token_response(user: User, access_token: str, refresh_token: str) -> TokenR
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRES_IN,
+        expires_in=_access_token_expires_in(),
         user=UserRead.model_validate(user),
     )
 
@@ -75,7 +121,16 @@ async def register(
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    _: None = Depends(
+        RateLimiter(
+            "register",
+            limit=get_settings().rate_limit_register_per_hour,
+            window_seconds=3600,
+        )
+    ),
 ) -> TokenResponse:
+    _verify_privileged_role_allowed(payload)
+
     result = await db.execute(select(User).where(User.email == payload.email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -201,7 +256,7 @@ async def refresh_tokens(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRES_IN,
+        expires_in=_access_token_expires_in(),
         user=None,
     )
 
@@ -219,7 +274,7 @@ async def logout(
 ) -> MessageResponse:
     access_jti = getattr(request.state, "access_jti", None)
     if access_jti:
-        await redis.set(f"blacklist:{access_jti}", "1", ex=BLACKLIST_TTL_SECONDS)
+        await redis.set(f"blacklist:{access_jti}", "1", ex=blacklist_ttl_seconds())
 
     await _revoke_refresh_token(redis, payload.refresh_token)
     return MessageResponse(message="logged out")

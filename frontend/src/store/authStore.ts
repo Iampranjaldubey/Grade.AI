@@ -13,7 +13,13 @@ interface AuthState {
 
   // Actions
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string, role: "professor" | "student") => Promise<void>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    role: "professor" | "student",
+    registrationCode?: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   refreshAccessToken: () => Promise<void>;
   initializeAuth: () => Promise<void>;
@@ -53,10 +59,22 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      register: async (name: string, email: string, password: string, role: "professor" | "student") => {
+      register: async (
+        name: string,
+        email: string,
+        password: string,
+        role: "professor" | "student",
+        registrationCode?: string,
+      ) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await api.register({ name, email, password, role });
+          const response = await api.register({
+            name,
+            email,
+            password,
+            role,
+            ...(registrationCode ? { registration_code: registrationCode } : {}),
+          });
           
           // Store tokens in localStorage
           localStorage.setItem("gradeai_access_token", response.access_token);

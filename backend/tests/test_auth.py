@@ -1,6 +1,7 @@
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import get_settings
 from app.core.enums import UserRole
 
 
@@ -19,7 +20,9 @@ async def test_register_and_login(client: AsyncClient) -> None:
     assert register_data["user"]["email"] == "teacher@gradeai.com"
     assert "access_token" in register_data
     assert "refresh_token" in register_data
-    assert register_data["expires_in"] == 900
+    # Derived from configuration rather than hardcoded: expires_in must track
+    # ACCESS_TOKEN_EXPIRE_MINUTES, which the issuer previously ignored.
+    assert register_data["expires_in"] == get_settings().access_token_expire_minutes * 60
 
     login_response = await client.post(
         "/api/v1/auth/login",

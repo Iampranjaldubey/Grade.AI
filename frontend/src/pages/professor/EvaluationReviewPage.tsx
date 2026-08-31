@@ -1,30 +1,54 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  ArrowLeft,
-  User,
-  CheckCircle,
   AlertTriangle,
-  XCircle,
-  ChevronDown,
-  ChevronUp,
-  Save,
-  ThumbsUp,
+  ArrowLeft,
+  ClipboardList,
+  PencilRuler,
   RefreshCw,
-  Loader2,
+  Save,
+  ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { evaluationsApi, submissionsApi, getErrorMessage } from "@/lib/api";
-import { ProfessorLayout } from "@/components/ProfessorLayout";
-import { formatDateTime, cn } from "@/lib/utils";
+import { evaluationsApi, getErrorMessage } from "@/lib/api";
+import { AppShell } from "@/components/layout";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  PageHeader,
+  Skeleton,
+  StatusBadge,
+  Textarea,
+} from "@/components/ui";
+import {
+  AIReasoningPanel,
+  ConfidenceMeter,
+  GradeDisplay,
+  RubricCriterionRow,
+  SubmissionViewer,
+} from "@/components/domain";
+import { formatDateTime } from "@/lib/utils";
+import type { EvaluationListOut, EvaluationOut } from "@/types";
 
 const overrideSchema = z.object({
   final_score: z.coerce.number().min(0, "Score must be non-negative"),
-  professor_feedback: z.string().min(10, "Feedback must be at least 10 characters"),
+  professor_feedback: z
+    .string()
+    .min(10, "Please explain the override in at least 10 characters"),
 });
 
 type OverrideFormData = z.infer<typeof overrideSchema>;
@@ -33,42 +57,77 @@ export function EvaluationReviewPage() {
   const { evaluationId } = useParams<{ evaluationId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [expandedCriteria, setExpandedCriteria] = useState<Set<number>>(new Set());
-  const [isOverriding, setIsOverriding] = useState(false);
 
-  const { data: evaluation, isLoading } = useQuery({
+  // Tracks an in-flight re-evaluation so we can poll until a new result lands
+  // (replacing the previous fixed `setTimeout` refresh).
+  const [reEvaluatingSince, setReEvaluatingSince] = useState<string | null>(null);
+  const [isOverriding, setIsOverriding] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"approve" | "override" | null>(
+    null,
+  );
+
+  const {
+    data: evaluation,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["evaluation", evaluationId],
     queryFn: () => evaluationsApi.getDetail(evaluationId!),
     enabled: !!evaluationId,
+    refetchInterval: (query) => {
+      if (!reEvaluatingSince) return false;
+      const current = query.state.data;
+      // Stop as soon as the evaluation timestamp changes.
+      if (current && current.evaluated_at !== reEvaluatingSince) return false;
+      return 3000;
+    },
   });
 
-  const { data: submission } = useQuery({
-    queryKey: ["submission", evaluation?.submission_id],
-    queryFn: async () => {
-      const allSubmissions = await submissionsApi.getAllSubmissions(
-        evaluation!.submission_id
-      );
-      return allSubmissions[0];
-    },
-    enabled: !!evaluation?.submission_id,
+  // Student / assignment identity isn't part of EvaluationOut, but the pending
+  // queue carries it. Same query key as the shell, so this is a cache read.
+  const { data: pendingList = [] } = useQuery({
+    queryKey: ["evaluations", "pending"],
+    queryFn: () => evaluationsApi.getPending(),
   });
+  const listItem: EvaluationListOut | undefined = pendingList.find(
+    (item) => item.id === evaluationId,
+  );
+
+  // Clear the polling flag once a fresh result arrives.
+  useEffect(() => {
+    if (
+      reEvaluatingSince &&
+      evaluation &&
+      evaluation.evaluated_at !== reEvaluatingSince
+    ) {
+      setReEvaluatingSince(null);
+      toast.success("Re-evaluation complete");
+    }
+  }, [evaluation, reEvaluatingSince]);
+
+  const handleMutationError = (error: unknown, fallback: string) => {
+    toast.error(getErrorMessage(error, fallback));
+    // On a concurrent-update conflict, refresh so the professor sees the
+    // current approval state instead of a stale "pending" view.
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status === 409) {
+      queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
+    }
+  };
 
   const approveMutation = useMutation({
     mutationFn: (feedback?: string) => evaluationsApi.approve(evaluationId!, feedback),
     onSuccess: () => {
-      toast.success("Grade approved successfully!");
+      toast.success("Grade approved");
       queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
       queryClient.invalidateQueries({ queryKey: ["evaluations"] });
+      setConfirmAction(null);
       navigate(-1);
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, "Failed to approve grade"));
-      // On a concurrent-update conflict, refresh so the professor sees the
-      // current approval state instead of a stale "pending" view.
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status === 409) {
-        queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
-      }
+      setConfirmAction(null);
+      handleMutationError(error, "Failed to approve grade");
     },
   });
 
@@ -79,494 +138,447 @@ export function EvaluationReviewPage() {
         professor_feedback: data.professor_feedback,
       }),
     onSuccess: () => {
-      toast.success("Grade overridden successfully!");
+      toast.success("Grade overridden");
       queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
       queryClient.invalidateQueries({ queryKey: ["evaluations"] });
+      setConfirmAction(null);
       navigate(-1);
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, "Failed to override grade"));
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status === 409) {
-        queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
-      }
+      setConfirmAction(null);
+      handleMutationError(error, "Failed to override grade");
     },
   });
 
   const reEvaluateMutation = useMutation({
     mutationFn: () => evaluationsApi.trigger(evaluation!.submission_id),
     onSuccess: () => {
-      toast.success("Re-evaluation triggered! Refreshing in 3 seconds...");
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["evaluation", evaluationId] });
-      }, 3000);
+      toast.success("Re-evaluation started");
+      setReEvaluatingSince(evaluation?.evaluated_at ?? null);
     },
-    onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, "Failed to trigger re-evaluation"));
-    },
+    onError: (error: unknown) =>
+      handleMutationError(error, "Failed to start re-evaluation"),
   });
 
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors },
   } = useForm<OverrideFormData>({
     resolver: zodResolver(overrideSchema),
   });
 
-  const toggleCriterion = (index: number) => {
-    setExpandedCriteria((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
-      } else {
-        next.add(index);
-      }
-      return next;
-    });
-  };
-
-  const getConfidenceBadge = (score: number) => {
-    if (score < 0.6) return { color: "bg-red-100 text-red-800", label: "Low", icon: XCircle };
-    if (score < 0.8)
-      return { color: "bg-amber-100 text-amber-800", label: "Medium", icon: AlertTriangle };
-    return { color: "bg-green-100 text-green-800", label: "High", icon: CheckCircle };
-  };
+  const breadcrumbs = [
+    { label: "Grading Queue", to: "/professor/evaluations" },
+    { label: listItem?.student_name ?? "Review" },
+  ];
 
   if (isLoading) {
     return (
-      <ProfessorLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-6">
-              <div className="h-96 bg-gray-200 rounded-xl"></div>
-            </div>
-            <div className="h-96 bg-gray-200 rounded-xl"></div>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <div className="space-y-6">
+          <Skeleton className="h-9 w-1/3" />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <Skeleton className="h-72 w-full" />
+            <Skeleton className="h-72 w-full lg:col-span-2" />
           </div>
         </div>
-      </ProfessorLayout>
+      </AppShell>
     );
   }
 
-  if (!evaluation || !evaluation.ai_feedback) {
+  if (isError || !evaluation) {
     return (
-      <ProfessorLayout>
-        <div className="text-center py-12">
-          <h1 className="text-2xl font-bold text-gray-900">Evaluation not found</h1>
-        </div>
-      </ProfessorLayout>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <ErrorState
+          title="Evaluation not found"
+          description="This evaluation may have been removed, or you don't have access to it."
+          onRetry={() => refetch()}
+        />
+      </AppShell>
     );
   }
 
-  const confidence = getConfidenceBadge(evaluation.ai_feedback.confidence_score);
-  const isApproved = evaluation.approval_status !== "pending";
-  const isFallback = evaluation.ai_feedback.is_fallback === true;
+  const feedback = evaluation.ai_feedback;
+  const isDecided = evaluation.approval_status !== "pending";
+  const isFallback = feedback?.is_fallback === true;
+  const criteria = feedback?.criteria_scores ?? [];
 
   return (
-    <ProfessorLayout>
+    <AppShell breadcrumbs={breadcrumbs}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 hover:bg-gray-100 rounded-lg transition"
+        <PageHeader
+          title={isDecided ? "Graded submission" : "Review AI evaluation"}
+          description={
+            listItem
+              ? `${listItem.student_name} · ${listItem.assignment_title}`
+              : "Check the AI's rubric-by-rubric reasoning, then approve or override."
+          }
+          actions={
+            <Button variant="ghost" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4" />
+              Back to queue
+            </Button>
+          }
+        />
+
+        {/* Re-evaluation in progress */}
+        {reEvaluatingSince && (
+          <div
+            role="status"
+            className="flex items-center gap-3 rounded-lg border border-processing/30 bg-processing-subtle px-4 py-3"
           >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Evaluation Review</h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Review and approve AI-generated evaluation
+            <RefreshCw
+              className="h-5 w-5 flex-shrink-0 text-processing motion-safe:animate-spin"
+              aria-hidden="true"
+            />
+            <p className="text-sm text-content-soft">
+              GradeAI is re-grading this submission. The results will refresh
+              automatically.
             </p>
           </div>
-        </div>
+        )}
 
-        {/* Main Content */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Evaluation Details */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Student & Submission Info */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <div className="flex items-start justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center">
-                    <User className="w-6 h-6 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">
-                      {submission?.student_name || "Student"}
-                    </h3>
-                    <p className="text-sm text-gray-600">
-                      {submission?.student_email || ""}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-gray-600">Submitted</p>
-                  <p className="text-sm font-medium text-gray-900">
-                    {submission ? formatDateTime(submission.submitted_at) : "-"}
-                  </p>
-                </div>
-              </div>
-
-              {/* AI Score */}
-              <div className="bg-gradient-to-br from-primary-50 to-primary-100 rounded-xl p-6 mb-6">
-                <div className="text-center">
-                  <p className="text-sm font-medium text-primary mb-2">AI Score</p>
-                  <div className="text-5xl font-bold text-primary mb-2">
-                    {evaluation.ai_score ?? "—"}
-                  </div>
-                  <div className="text-lg text-primary-700">
-                    {evaluation.ai_feedback.percentage.toFixed(1)}%
-                  </div>
-                </div>
-              </div>
-
-              {/* Confidence Badge */}
-              <div className="flex items-center justify-center gap-2 mb-6">
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium",
-                    confidence.color
-                  )}
-                >
-                  <confidence.icon className="w-4 h-4" />
-                  {confidence.label} Confidence ({(evaluation.ai_feedback.confidence_score * 100).toFixed(0)}%)
-                </span>
-              </div>
-
-              {/* Fallback warning: AI grading failed and a placeholder score was
-                  produced. This must be manually reviewed before approval. */}
-              {isFallback && (
-                <div
-                  role="alert"
-                  className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 mb-2"
-                >
-                  <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold text-amber-900">
-                      Needs manual review
-                    </p>
-                    <p className="text-sm text-amber-800 mt-1">
-                      Automated grading did not complete for this submission, so
-                      this is a placeholder score. Review the submission and
-                      override the grade before approving.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Criteria Breakdown */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Criteria Breakdown
-              </h3>
-              <div className="space-y-3">
-                {evaluation.ai_feedback.criteria_scores.map((criterion, index) => (
-                  <div
-                    key={index}
-                    className="border border-gray-200 rounded-lg overflow-hidden"
-                  >
-                    <button
-                      onClick={() => toggleCriterion(index)}
-                      className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div>
-                          <h4 className="font-medium text-gray-900 text-left">
-                            {criterion.criterion_name}
-                          </h4>
-                          <p className="text-sm text-gray-600">
-                            {criterion.awarded} / {criterion.max} points
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={cn(
-                            "text-sm font-medium px-3 py-1 rounded-full",
-                            criterion.awarded === criterion.max
-                              ? "bg-green-100 text-green-800"
-                              : criterion.awarded >= criterion.max * 0.7
-                              ? "bg-amber-100 text-amber-800"
-                              : "bg-red-100 text-red-800"
-                          )}
-                        >
-                          {((criterion.awarded / criterion.max) * 100).toFixed(0)}%
-                        </span>
-                        {expandedCriteria.has(index) ? (
-                          <ChevronUp className="w-5 h-5 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-gray-400" />
-                        )}
-                      </div>
-                    </button>
-                    {expandedCriteria.has(index) && (
-                      <div className="px-4 pb-4 bg-gray-50 border-t border-gray-200">
-                        <p className="text-sm text-gray-700 mt-3">{criterion.reasoning}</p>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Strengths, Weaknesses, Missing Topics */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Strengths */}
-              {evaluation.strengths && evaluation.strengths.length > 0 && (
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <h3 className="text-sm font-semibold text-green-900 mb-3 flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4" />
-                    Strengths
-                  </h3>
-                  <div className="space-y-2">
-                    {evaluation.strengths.map((strength, index) => (
-                      <div
-                        key={index}
-                        className="bg-green-50 border border-green-200 rounded-lg p-3"
-                      >
-                        <p className="text-sm text-green-800">{strength}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Weaknesses */}
-              {evaluation.weaknesses && evaluation.weaknesses.length > 0 && (
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <h3 className="text-sm font-semibold text-amber-900 mb-3 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    Weaknesses
-                  </h3>
-                  <div className="space-y-2">
-                    {evaluation.weaknesses.map((weakness, index) => (
-                      <div
-                        key={index}
-                        className="bg-amber-50 border border-amber-200 rounded-lg p-3"
-                      >
-                        <p className="text-sm text-amber-800">{weakness}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Missing Topics */}
-              {evaluation.missing_topics && evaluation.missing_topics.length > 0 && (
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <h3 className="text-sm font-semibold text-red-900 mb-3 flex items-center gap-2">
-                    <XCircle className="w-4 h-4" />
-                    Missing Topics
-                  </h3>
-                  <div className="space-y-2">
-                    {evaluation.missing_topics.map((topic, index) => (
-                      <div
-                        key={index}
-                        className="bg-red-50 border border-red-200 rounded-lg px-3 py-1.5"
-                      >
-                        <p className="text-sm text-red-800">{topic}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Overall Feedback */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Overall AI Feedback
-              </h3>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-gray-700 whitespace-pre-wrap">
-                  {typeof evaluation.ai_feedback === "string"
-                    ? evaluation.ai_feedback
-                    : "No overall feedback provided"}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column - Professor Actions */}
-          <div className="space-y-6">
-            {/* Re-evaluate Button */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <button
-                onClick={() => reEvaluateMutation.mutate()}
-                disabled={reEvaluateMutation.isPending || isApproved}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {reEvaluateMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Re-evaluating...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-5 h-5" />
-                    Re-evaluate
-                  </>
-                )}
-              </button>
-              <p className="text-xs text-gray-500 text-center mt-2">
-                Trigger a new AI evaluation
+        {/* Needs-manual-review warning */}
+        {isFallback && !isDecided && (
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning-subtle px-4 py-3"
+          >
+            <AlertTriangle
+              className="mt-0.5 h-5 w-5 flex-shrink-0 text-warning"
+              aria-hidden="true"
+            />
+            <div>
+              <p className="font-medium text-content">Needs manual review</p>
+              <p className="mt-0.5 text-sm text-content-soft">
+                Automated grading didn't complete, so this is a placeholder score. Read
+                the submission and override the grade before approving.
               </p>
             </div>
+          </div>
+        )}
 
-            {/* Approve Button */}
-            {!isApproved && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <button
-                  onClick={() => approveMutation.mutate(undefined)}
-                  disabled={approveMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {approveMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Approving...
-                    </>
-                  ) : (
-                    <>
-                      <ThumbsUp className="w-5 h-5" />
-                      Approve Grade
-                    </>
-                  )}
-                </button>
-                <p className="text-xs text-gray-500 text-center mt-2">
-                  Accept AI score as final grade
-                </p>
-              </div>
-            )}
-
-            {/* Override Section */}
-            {!isApproved && !isOverriding && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <button
-                  onClick={() => setIsOverriding(true)}
-                  className="w-full px-4 py-3 border-2 border-primary text-primary hover:bg-primary-50 font-medium rounded-lg transition"
-                >
-                  Override Grade
-                </button>
-                <p className="text-xs text-gray-500 text-center mt-2">
-                  Manually adjust the final score
-                </p>
-              </div>
-            )}
-
-            {isOverriding && !isApproved && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  Override Grade
-                </h3>
-                <form
-                  onSubmit={handleSubmit((data) => overrideMutation.mutate(data))}
-                  className="space-y-4"
-                >
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Final Score *
-                    </label>
-                    <input
-                      {...register("final_score")}
-                      type="number"
-                      step="0.01"
-                      className={cn(
-                        "block w-full px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent",
-                        errors.final_score ? "border-red-300" : "border-gray-300"
-                      )}
-                      placeholder="85"
-                    />
-                    {errors.final_score && (
-                      <p className="mt-1 text-xs text-red-600">
-                        {errors.final_score.message}
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Professor Feedback *
-                    </label>
-                    <textarea
-                      {...register("professor_feedback")}
-                      rows={6}
-                      className={cn(
-                        "block w-full px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent resize-none",
-                        errors.professor_feedback ? "border-red-300" : "border-gray-300"
-                      )}
-                      placeholder="Explain why you're overriding the AI score..."
-                    />
-                    {errors.professor_feedback && (
-                      <p className="mt-1 text-xs text-red-600">
-                        {errors.professor_feedback.message}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="submit"
-                      disabled={overrideMutation.isPending}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {overrideMutation.isPending ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-5 h-5" />
-                          Save Override
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsOverriding(false)}
-                      className="px-4 py-3 text-gray-700 hover:bg-gray-100 font-medium rounded-lg transition"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* Approval Status */}
-            {isApproved && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <div className="text-center">
-                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <CheckCircle className="w-8 h-8 text-green-600" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    Grade {evaluation.approval_status === "approved" ? "Approved" : "Overridden"}
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    {evaluation.approved_at
-                      ? formatDateTime(evaluation.approved_at)
-                      : "Recently approved"}
+        {/* Three-pane workspace */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* LEFT — the work being graded */}
+          <div className="space-y-6">
+            <SubmissionViewer
+              studentName={listItem?.student_name}
+              studentEmail={listItem?.student_email}
+              unavailableNote="The submitted document isn't available from this endpoint yet."
+            />
+            {listItem && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Assignment</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="font-medium text-content">
+                    {listItem.assignment_title}
                   </p>
-                  {evaluation.final_score && (
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                      <p className="text-sm text-gray-600 mb-1">Final Score</p>
-                      <p className="text-2xl font-bold text-primary">
-                        {evaluation.final_score}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             )}
+          </div>
+
+          {/* CENTER — rubric evaluation */}
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>Rubric evaluation</CardTitle>
+                  <p className="mt-0.5 text-sm text-content-muted">
+                    Every score traces back to one of your rubric criteria.
+                  </p>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {criteria.length === 0 ? (
+                  <EmptyState
+                    icon={ClipboardList}
+                    title="No criterion breakdown"
+                    description="This evaluation didn't return per-criterion scores."
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {criteria.map((criterion, index) => (
+                      <RubricCriterionRow
+                        key={`${criterion.criterion_name}-${index}`}
+                        criterionName={criterion.criterion_name}
+                        awarded={criterion.awarded}
+                        max={criterion.max}
+                        reasoning={criterion.reasoning}
+                      />
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <AIReasoningPanel
+              strengths={evaluation.strengths}
+              weaknesses={evaluation.weaknesses}
+              missingTopics={evaluation.missing_topics}
+            />
+          </div>
+
+          {/* RIGHT — the decision */}
+          <div className="space-y-6 lg:sticky lg:top-24 lg:self-start">
+            <DecisionPanel
+              evaluation={evaluation}
+              isDecided={isDecided}
+              isOverriding={isOverriding}
+              onStartOverride={() => setIsOverriding(true)}
+              onCancelOverride={() => setIsOverriding(false)}
+              onApprove={() => setConfirmAction("approve")}
+              onRequestOverride={handleSubmit(() => setConfirmAction("override"))}
+              onReEvaluate={() => reEvaluateMutation.mutate()}
+              isReEvaluating={
+                reEvaluateMutation.isPending || reEvaluatingSince !== null
+              }
+              register={register}
+              errors={errors}
+            />
           </div>
         </div>
       </div>
-    </ProfessorLayout>
+
+      {/* Approve confirmation — finalising a grade is consequential */}
+      <ConfirmDialog
+        open={confirmAction === "approve"}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+        title="Approve the AI's grade?"
+        description={
+          <>
+            The AI score of{" "}
+            <strong className="font-semibold text-content">
+              {evaluation.ai_score ?? "—"}
+            </strong>{" "}
+            becomes this student's final grade and their feedback is released.
+          </>
+        }
+        confirmLabel="Approve grade"
+        isLoading={approveMutation.isPending}
+        onConfirm={() => approveMutation.mutate(undefined)}
+      />
+
+      {/* Override confirmation */}
+      <ConfirmDialog
+        open={confirmAction === "override"}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+        title="Override with your own grade?"
+        description={
+          <>
+            Your score of{" "}
+            <strong className="font-semibold text-content">
+              {getValues("final_score") || "—"}
+            </strong>{" "}
+            replaces the AI's recommendation and becomes the final grade.
+          </>
+        }
+        confirmLabel="Save override"
+        isLoading={overrideMutation.isPending}
+        onConfirm={() => overrideMutation.mutate(getValues())}
+      />
+    </AppShell>
+  );
+}
+
+interface DecisionPanelProps {
+  evaluation: EvaluationOut;
+  isDecided: boolean;
+  isOverriding: boolean;
+  onStartOverride: () => void;
+  onCancelOverride: () => void;
+  onApprove: () => void;
+  onRequestOverride: () => void;
+  onReEvaluate: () => void;
+  isReEvaluating: boolean;
+  register: ReturnType<typeof useForm<OverrideFormData>>["register"];
+  errors: ReturnType<typeof useForm<OverrideFormData>>["formState"]["errors"];
+}
+
+/**
+ * The professor's side of the workspace. Keeps the AI's *recommendation* and the
+ * professor's *final decision* visually distinct — the single most important
+ * distinction in the product.
+ */
+function DecisionPanel({
+  evaluation,
+  isDecided,
+  isOverriding,
+  onStartOverride,
+  onCancelOverride,
+  onApprove,
+  onRequestOverride,
+  onReEvaluate,
+  isReEvaluating,
+  register,
+  errors,
+}: DecisionPanelProps) {
+  const feedback = evaluation.ai_feedback;
+
+  return (
+    <>
+      {/* AI recommendation */}
+      <GradeDisplay
+        label="AI recommendation"
+        score={evaluation.ai_score}
+        percentage={feedback?.percentage}
+        tone="draft"
+        caption={
+          feedback ? (
+            <ConfidenceMeter score={feedback.confidence_score} variant="bar" />
+          ) : undefined
+        }
+      />
+
+      {isDecided ? (
+        /* Final decision */
+        <Card>
+          <CardHeader>
+            <div className="flex w-full items-center justify-between gap-3">
+              <CardTitle>Your decision</CardTitle>
+              <StatusBadge kind="approval" value={evaluation.approval_status} />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <GradeDisplay
+              label="Final grade"
+              score={evaluation.final_score ?? evaluation.ai_score}
+              percentage={feedback?.percentage}
+              tone="final"
+            />
+            <p className="text-sm text-content-muted">
+              {evaluation.approval_status === "approved"
+                ? "You accepted the AI's recommendation"
+                : "You replaced the AI's recommendation"}
+              {evaluation.approved_at
+                ? ` on ${formatDateTime(evaluation.approved_at)}.`
+                : "."}
+            </p>
+            {evaluation.professor_feedback && (
+              <div className="rounded-md border border-edge bg-surface-raised p-3">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">
+                  Your feedback
+                </p>
+                <p className="whitespace-pre-wrap text-sm text-content-soft">
+                  {evaluation.professor_feedback}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        /* Pending decision — actions */
+        <Card>
+          <CardHeader>
+            <div>
+              <CardTitle>Your decision</CardTitle>
+              <p className="mt-0.5 text-sm text-content-muted">
+                Nothing reaches the student until you decide.
+              </p>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!isOverriding ? (
+              <>
+                <Button block onClick={onApprove}>
+                  <ShieldCheck className="h-4 w-4" />
+                  Approve AI grade
+                </Button>
+                <Button variant="outline" block onClick={onStartOverride}>
+                  <PencilRuler className="h-4 w-4" />
+                  Override grade
+                </Button>
+                <div className="border-t border-edge-subtle pt-4">
+                  <Button
+                    variant="ghost"
+                    block
+                    onClick={onReEvaluate}
+                    isLoading={isReEvaluating}
+                  >
+                    {!isReEvaluating && <RefreshCw className="h-4 w-4" />}
+                    Re-run AI grading
+                  </Button>
+                  <p className="mt-1.5 text-center text-xs text-content-muted">
+                    Ask the AI to grade this submission again
+                  </p>
+                </div>
+              </>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  onRequestOverride();
+                }}
+                className="space-y-4"
+                noValidate
+              >
+                <Field
+                  label="Final score"
+                  htmlFor="final_score"
+                  required
+                  error={errors.final_score?.message}
+                >
+                  <Input
+                    {...register("final_score")}
+                    id="final_score"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="85"
+                    invalid={!!errors.final_score}
+                    aria-describedby={
+                      errors.final_score ? "final_score-error" : undefined
+                    }
+                  />
+                </Field>
+
+                <Field
+                  label="Feedback for the student"
+                  htmlFor="professor_feedback"
+                  required
+                  error={errors.professor_feedback?.message}
+                  hint="Explain what you changed and why."
+                >
+                  <Textarea
+                    {...register("professor_feedback")}
+                    id="professor_feedback"
+                    rows={6}
+                    placeholder="Explain why you're adjusting the AI's score…"
+                    invalid={!!errors.professor_feedback}
+                    aria-describedby={
+                      errors.professor_feedback
+                        ? "professor_feedback-error"
+                        : "professor_feedback-hint"
+                    }
+                  />
+                </Field>
+
+                <div className="flex gap-2">
+                  <Button type="submit" className="flex-1">
+                    <Save className="h-4 w-4" />
+                    Save override
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={onCancelOverride}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Provenance */}
+      <div className="flex items-center gap-2 px-1 text-xs text-content-muted">
+        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+        <span>Drafted by AI on {formatDateTime(evaluation.evaluated_at)}</span>
+        {feedback?.is_fallback && <Badge tone="warning">Placeholder</Badge>}
+      </div>
+    </>
   );
 }

@@ -26,7 +26,9 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(user_id: uuid.UUID, role: UserRole) -> str:
     settings = get_settings()
-    expire = datetime.now(UTC) + timedelta(minutes=15)
+    # Honour the configured lifetime. This previously hardcoded 15 minutes, so
+    # ACCESS_TOKEN_EXPIRE_MINUTES silently had no effect.
+    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "role": role.value,

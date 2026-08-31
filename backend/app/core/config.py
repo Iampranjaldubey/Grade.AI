@@ -36,13 +36,32 @@ class Settings(BaseSettings):
     chromadb_host: str = Field(default="localhost", alias="CHROMADB_HOST")
     chromadb_port: int = Field(default=8001, alias="CHROMADB_PORT")
 
+    # Shared secret required to self-register as a professor (or TA/admin).
+    # Without this, anyone hitting the public /auth/register endpoint could
+    # assign themselves the professor role and grade real submissions.
+    # Required in production (see validate_required); left blank in
+    # development/test so local setup and the test suite stay frictionless.
+    professor_registration_code: str = Field(default="", alias="PROFESSOR_REGISTRATION_CODE")
+
+    # Fixed-window rate limits (requests per window, per client IP).
+    rate_limit_register_per_hour: int = Field(default=10, alias="RATE_LIMIT_REGISTER_PER_HOUR")
+    rate_limit_presign_per_minute: int = Field(default=30, alias="RATE_LIMIT_PRESIGN_PER_MINUTE")
+
     jwt_secret: str = Field(default="change-me", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    # Access tokens are short-lived; clients refresh via the refresh token. This
+    # value is authoritative for the token's exp, the `expires_in` field, and the
+    # logout blacklist TTL.
+    access_token_expire_minutes: int = Field(default=15, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-2.0-flash", alias="GEMINI_MODEL")
+
+    # Hard ceiling on a single Gemini call. Without this the SDK can block
+    # indefinitely, and because Celery runs with acks_late a hung call occupies
+    # a worker slot forever instead of failing into the retry/fallback path.
+    gemini_request_timeout_seconds: int = Field(default=120, alias="GEMINI_REQUEST_TIMEOUT_SECONDS")
 
     aws_s3_public_endpoint: str | None = Field(default=None, alias="AWS_S3_PUBLIC_ENDPOINT")
     aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
@@ -65,6 +84,14 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/2",
         alias="CELERY_RESULT_BACKEND",
     )
+
+    # Task time limits. The soft limit raises SoftTimeLimitExceeded inside the
+    # task, so it is caught by the existing handlers and follows the normal
+    # retry/fallback path; the hard limit kills a task that ignores it. Document
+    # processing (download + parse + embed) is the slowest path, so the soft
+    # limit is generous.
+    celery_task_soft_time_limit: int = Field(default=600, alias="CELERY_TASK_SOFT_TIME_LIMIT")
+    celery_task_time_limit: int = Field(default=660, alias="CELERY_TASK_TIME_LIMIT")
 
     # Stored as a raw comma-separated string, not list[str]. pydantic-settings
     # tries to JSON-decode any "complex" (list/dict) field sourced from an env
@@ -141,6 +168,11 @@ class Settings(BaseSettings):
                 errors.append("REDIS_URL is required in production")
             if not self.aws_s3_bucket:
                 errors.append("AWS_S3_BUCKET is required in production")
+            if not self.professor_registration_code:
+                errors.append(
+                    "PROFESSOR_REGISTRATION_CODE must be set in production, "
+                    "otherwise anyone can self-register as a professor"
+                )
 
         if (self.is_development or self.is_production) and not self.database_url:
             errors.append("DATABASE_URL is required")

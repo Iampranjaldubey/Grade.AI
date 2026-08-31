@@ -1,11 +1,24 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import * as api from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { getErrorMessage } from "@/lib/api";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Field,
+  Input,
+  Select,
+  Textarea,
+} from "@/components/ui";
 import type { AssignmentCreate, GradingMode } from "@/types";
 
 const assignmentSchema = z.object({
@@ -24,7 +37,11 @@ interface CreateAssignmentModalProps {
   onClose: () => void;
 }
 
-export function CreateAssignmentModal({ courseId, isOpen, onClose }: CreateAssignmentModalProps) {
+export function CreateAssignmentModal({
+  courseId,
+  isOpen,
+  onClose,
+}: CreateAssignmentModalProps) {
   const queryClient = useQueryClient();
 
   const {
@@ -34,10 +51,7 @@ export function CreateAssignmentModal({ courseId, isOpen, onClose }: CreateAssig
     formState: { errors },
   } = useForm<AssignmentFormData>({
     resolver: zodResolver(assignmentSchema),
-    defaultValues: {
-      max_score: 100,
-      grading_mode: "auto",
-    },
+    defaultValues: { max_score: 100, grading_mode: "auto" },
   });
 
   const createMutation = useMutation({
@@ -45,184 +59,136 @@ export function CreateAssignmentModal({ courseId, isOpen, onClose }: CreateAssig
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assignments", courseId] });
       queryClient.invalidateQueries({ queryKey: ["course", courseId] });
-      toast.success("Assignment created successfully!");
+      queryClient.invalidateQueries({ queryKey: ["analytics-overview"] });
+      toast.success("Assignment created");
       reset();
       onClose();
     },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to create assignment";
-      toast.error(message);
-    },
+    onError: (error: unknown) =>
+      toast.error(getErrorMessage(error, "Failed to create assignment")),
   });
 
   const onSubmit = (data: AssignmentFormData) => {
-    // Convert datetime-local to ISO format
-    const dueDate = new Date(data.due_date).toISOString();
-    
     createMutation.mutate({
       course_id: courseId,
       title: data.title,
       description: data.description,
-      due_date: dueDate,
+      // datetime-local gives a local value; the API expects ISO.
+      due_date: new Date(data.due_date).toISOString(),
       max_score: data.max_score.toString(),
       grading_mode: data.grading_mode as GradingMode,
     });
   };
 
-  const handleClose = () => {
-    if (!createMutation.isPending) {
-      reset();
-      onClose();
-    }
+  const handleOpenChange = (open: boolean) => {
+    if (open || createMutation.isPending) return;
+    reset();
+    onClose();
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
-        onClick={handleClose}
-      />
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent size="lg">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate>
+          <DialogHeader>
+            <DialogTitle>Create an assignment</DialogTitle>
+            <DialogDescription>
+              You'll add the grading rubric once it's created.
+            </DialogDescription>
+          </DialogHeader>
 
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl transform transition-all">
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-900">Create New Assignment</h2>
-            <button
-              onClick={handleClose}
-              disabled={createMutation.isPending}
-              className="text-gray-400 hover:text-gray-600 transition disabled:opacity-50"
+          <DialogBody className="space-y-4">
+            <Field
+              label="Title"
+              htmlFor="title"
+              required
+              error={errors.title?.message}
             >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6">
-            {/* Title */}
-            <div>
-              <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
-                Assignment Title *
-              </label>
-              <input
+              <Input
                 {...register("title")}
                 id="title"
-                type="text"
-                className={cn(
-                  "block w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent transition",
-                  errors.title ? "border-red-300 focus:ring-red-500" : "border-gray-300"
-                )}
                 placeholder="Assignment 1: Introduction to Python"
+                invalid={!!errors.title}
+                aria-describedby={errors.title ? "title-error" : undefined}
               />
-              {errors.title && (
-                <p className="mt-1 text-sm text-red-600">{errors.title.message}</p>
-              )}
-            </div>
+            </Field>
 
-            {/* Description */}
-            <div>
-              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
-                Description (Optional)
-              </label>
-              <textarea
+            <Field label="Description" htmlFor="description">
+              <Textarea
                 {...register("description")}
                 id="description"
                 rows={4}
-                className="block w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent transition resize-none"
-                placeholder="Describe the assignment objectives and requirements..."
+                placeholder="Describe the objectives and requirements…"
               />
-            </div>
+            </Field>
 
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Due Date */}
-              <div>
-                <label htmlFor="due_date" className="block text-sm font-medium text-gray-700 mb-2">
-                  Due Date *
-                </label>
-                <input
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Due date"
+                htmlFor="due_date"
+                required
+                error={errors.due_date?.message}
+              >
+                <Input
                   {...register("due_date")}
                   id="due_date"
                   type="datetime-local"
-                  className={cn(
-                    "block w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent transition",
-                    errors.due_date ? "border-red-300 focus:ring-red-500" : "border-gray-300"
-                  )}
+                  invalid={!!errors.due_date}
+                  aria-describedby={errors.due_date ? "due_date-error" : undefined}
                 />
-                {errors.due_date && (
-                  <p className="mt-1 text-sm text-red-600">{errors.due_date.message}</p>
-                )}
-              </div>
+              </Field>
 
-              {/* Max Score */}
-              <div>
-                <label htmlFor="max_score" className="block text-sm font-medium text-gray-700 mb-2">
-                  Max Score *
-                </label>
-                <input
+              <Field
+                label="Total points"
+                htmlFor="max_score"
+                required
+                error={errors.max_score?.message}
+              >
+                <Input
                   {...register("max_score")}
                   id="max_score"
                   type="number"
                   min="1"
-                  className={cn(
-                    "block w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent transition",
-                    errors.max_score ? "border-red-300 focus:ring-red-500" : "border-gray-300"
-                  )}
                   placeholder="100"
+                  invalid={!!errors.max_score}
+                  aria-describedby={errors.max_score ? "max_score-error" : undefined}
                 />
-                {errors.max_score && (
-                  <p className="mt-1 text-sm text-red-600">{errors.max_score.message}</p>
-                )}
-              </div>
+              </Field>
             </div>
 
-            {/* Grading Mode */}
-            <div>
-              <label htmlFor="grading_mode" className="block text-sm font-medium text-gray-700 mb-2">
-                Grading Mode *
-              </label>
-              <select
+            <Field
+              label="Grading mode"
+              htmlFor="grading_mode"
+              required
+              hint="How submissions for this assignment get graded."
+            >
+              <Select
                 {...register("grading_mode")}
                 id="grading_mode"
-                className="block w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                aria-describedby="grading_mode-hint"
               >
-                <option value="auto">Auto - AI-powered grading</option>
-                <option value="manual">Manual - Professor grades manually</option>
-                <option value="hybrid">Hybrid - AI suggestions + manual review</option>
-              </select>
-            </div>
+                <option value="auto">Auto — AI drafts every grade</option>
+                <option value="manual">Manual — you grade each submission</option>
+                <option value="hybrid">Hybrid — AI suggests, you review</option>
+              </Select>
+            </Field>
+          </DialogBody>
 
-            {/* Buttons */}
-            <div className="flex items-center justify-end space-x-3 pt-4">
-              <button
-                type="button"
-                onClick={handleClose}
-                disabled={createMutation.isPending}
-                className="px-6 py-2.5 text-gray-700 font-medium hover:bg-gray-100 rounded-lg transition disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={createMutation.isPending}
-                className="px-6 py-2.5 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
-              >
-                {createMutation.isPending ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                    Creating...
-                  </>
-                ) : (
-                  "Create Assignment"
-                )}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => handleOpenChange(false)}
+              disabled={createMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={createMutation.isPending}>
+              Create assignment
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

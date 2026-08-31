@@ -22,5 +22,16 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Split rarely-changing vendor code from app code so browsers can keep
+        // it cached across deploys.
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-data": ["@tanstack/react-query", "axios", "zustand"],
+          "vendor-forms": ["react-hook-form", "zod", "@hookform/resolvers/zod"],
+        },
+      },
+    },
   },
 });

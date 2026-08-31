@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
+import { Spinner } from "@/components/ui";
 import type { UserRole } from "@/types";
 
 interface ProtectedRouteProps {
@@ -19,8 +20,8 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="flex min-h-screen items-center justify-center bg-surface-muted">
+        <Spinner className="h-8 w-8 text-brand" label="Checking your session" />
       </div>
     );
   }

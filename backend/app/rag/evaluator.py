@@ -106,7 +106,10 @@ class GradingEvaluator:
 
         # Call Gemini API
         try:
-            response = self.model.generate_content([system_prompt, user_prompt])
+            response = self.model.generate_content(
+                [system_prompt, user_prompt],
+                request_options={"timeout": self.settings.gemini_request_timeout_seconds},
+            )
             response_text = response.text
 
             logger.info("gemini_response_received", length=len(response_text))
@@ -365,7 +368,10 @@ Return JSON only:
 {{"total_score": <number>, "max_score": {assignment.max_score}, "percentage": <number>, "criteria_scores": [...], "strengths": [...], "weaknesses": [...], "missing_topics": [], "overall_feedback": "<text>", "confidence_score": 0.5}}
 """
 
-            response = self.model.generate_content(simple_prompt)
+            response = self.model.generate_content(
+                simple_prompt,
+                request_options={"timeout": self.settings.gemini_request_timeout_seconds},
+            )
             result_dict = self._parse_response(response.text, float(assignment.max_score))
 
             sources = list(

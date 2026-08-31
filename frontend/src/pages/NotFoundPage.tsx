@@ -1,23 +1,36 @@
 import { Link } from "react-router-dom";
-import { Home } from "lucide-react";
+import { Home, Compass } from "lucide-react";
+import { buttonClasses } from "@/components/ui";
+import { useAuthStore } from "@/store/authStore";
+import { homeForRole } from "@/components/layout";
 
 export function NotFoundPage() {
+  const { isAuthenticated, user } = useAuthStore();
+  const homePath = isAuthenticated ? homeForRole(user?.role) : "/login";
+
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="text-center">
-        <h1 className="text-9xl font-bold text-primary">404</h1>
-        <h2 className="text-3xl font-semibold text-gray-900 mt-4">Page Not Found</h2>
-        <p className="text-gray-600 mt-2 mb-8">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
-        <Link
-          to="/"
-          className="inline-flex items-center px-6 py-3 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition"
+    <main className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-12">
+      <div className="w-full max-w-md text-center">
+        <span
+          aria-hidden="true"
+          className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-brand-subtle text-brand"
         >
-          <Home className="w-5 h-5 mr-2" />
-          Go Home
+          <Compass className="h-7 w-7" />
+        </span>
+
+        <p className="font-serif text-6xl font-semibold text-content">404</p>
+        <h1 className="mt-3 font-serif text-2xl font-semibold text-content">
+          Page not found
+        </h1>
+        <p className="mt-2 text-content-muted">
+          The page you're looking for doesn't exist or may have been moved.
+        </p>
+
+        <Link to={homePath} className={buttonClasses({ className: "mt-8" })}>
+          <Home className="h-4 w-4" aria-hidden="true" />
+          {isAuthenticated ? "Back to dashboard" : "Go to sign in"}
         </Link>
       </div>
-    </div>
+    </main>
   );
 }

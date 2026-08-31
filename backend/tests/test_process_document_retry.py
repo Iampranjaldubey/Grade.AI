@@ -1,6 +1,9 @@
 """
-Tests for the process_document poison-pill fix (see RETRY_BEHAVIOR_AUDIT_REPORT.md
-and POISON_PILL_FIX_COMPLETE.md).
+Tests that process_document is safe to retry (the "poison pill" case).
+
+A retry re-runs the whole pipeline, so without cleanup the second attempt would
+violate the DocumentChunk unique constraint on (document_id, chunk_index) and
+fail forever — a message that can never succeed and never drains.
 
 Runs the REAL Celery task body via `.apply()` (Celery's eager/synchronous mode),
 which actually re-invokes the task function on `self.retry()` instead of just
@@ -248,9 +251,9 @@ def test_original_exception_preserved_when_status_update_fails_during_retry_hand
     monkeypatch, patched_get_sync_db, sample_document
 ) -> None:
     """
-    Per POISON_PILL_FIX_COMPLETE.md change #3: if _update_document_status()
-    itself raises while handling a failure, the ORIGINAL exception must still
-    be the one passed to self.retry()/re-raised — not the cleanup failure.
+    If _update_document_status() itself raises while handling a failure, the
+    ORIGINAL exception must still be the one passed to self.retry()/re-raised —
+    not the cleanup failure, which would mask the real cause.
     """
     chromadb_mock = _make_chromadb_mock(
         add_chunks_side_effect=RuntimeError("original chromadb failure")

@@ -1,38 +1,57 @@
 import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
-  Calendar,
   Award,
-  FileText,
-  Upload,
-  CheckCircle,
-  Clock,
-  AlertCircle,
-  ChevronDown,
-  ChevronUp,
+  CalendarClock,
+  CheckCircle2,
+  ClipboardList,
+  Loader2,
   RefreshCw,
+  Upload,
+  X,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import * as api from "@/lib/api";
 import { submissionsApi, evaluationsApi, uploadsApi, getErrorMessage } from "@/lib/api";
-import { StudentLayout } from "@/components/StudentLayout";
+import { AppShell } from "@/components/layout";
 import { DocumentUploadZone } from "@/components/DocumentUploadZone";
-import { formatDateTime, cn } from "@/lib/utils";
-import type { DocumentType } from "@/types";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  ErrorState,
+  PageHeader,
+  Skeleton,
+} from "@/components/ui";
+import {
+  AIReasoningPanel,
+  GradeDisplay,
+  RubricCriterionRow,
+  SubmissionViewer,
+  readEvaluationSummary,
+} from "@/components/domain";
+import { formatDateTime, isPastDue, cn } from "@/lib/utils";
+import type { AssignmentOut, DocumentType, RubricOut } from "@/types";
 
 export function AssignmentSubmissionPage() {
   const { assignmentId } = useParams<{ assignmentId: string }>();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
+
   const [isResubmitting, setIsResubmitting] = useState(false);
   const [uploadedDocumentId, setUploadedDocumentId] = useState<string | null>(null);
   const [uploadedFileKey, setUploadedFileKey] = useState<string | null>(null);
   const [uploadedFileSize, setUploadedFileSize] = useState<number>(0);
-  const [expandedCriteria, setExpandedCriteria] = useState<Set<number>>(new Set());
 
-  const { data: assignment, isLoading: assignmentLoading } = useQuery({
+  const {
+    data: assignment,
+    isLoading: assignmentLoading,
+    isError: assignmentError,
+    refetch: refetchAssignment,
+  } = useQuery({
     queryKey: ["assignment", assignmentId],
     queryFn: () => api.getAssignment(assignmentId!),
     enabled: !!assignmentId,
@@ -49,6 +68,9 @@ export function AssignmentSubmissionPage() {
     queryFn: () => submissionsApi.getMySubmission(assignmentId!),
     enabled: !!assignmentId,
     retry: false,
+    // Keep checking while the AI is grading so the result appears on its own.
+    refetchInterval: (query) =>
+      query.state.data?.status === "evaluating" ? 5000 : false,
   });
 
   const { data: evaluation } = useQuery({
@@ -58,7 +80,7 @@ export function AssignmentSubmissionPage() {
     retry: false,
   });
 
-  const { data: document } = useQuery({
+  const { data: uploadedDocument } = useQuery({
     queryKey: ["document", uploadedDocumentId],
     queryFn: () => uploadsApi.getStatus(uploadedDocumentId!),
     enabled: !!uploadedDocumentId,
@@ -79,7 +101,7 @@ export function AssignmentSubmissionPage() {
       file_size_bytes: number;
     }) => submissionsApi.submit(data),
     onSuccess: () => {
-      toast.success("Assignment submitted successfully!");
+      toast.success("Assignment submitted");
       queryClient.invalidateQueries({ queryKey: ["mySubmission", assignmentId] });
       setUploadedDocumentId(null);
       setUploadedFileKey(null);
@@ -91,482 +113,440 @@ export function AssignmentSubmissionPage() {
     },
   });
 
-  const handleUploadSuccess = (documentId: string, fileKey: string, fileSizeBytes: number) => {
+  const handleUploadSuccess = (
+    documentId: string,
+    fileKey: string,
+    fileSizeBytes: number,
+  ) => {
     setUploadedDocumentId(documentId);
     setUploadedFileKey(fileKey);
     setUploadedFileSize(fileSizeBytes);
   };
 
-  const handleSubmit = async () => {
-    if (!uploadedDocumentId || !document || !uploadedFileKey || !uploadedFileSize) {
+  const handleSubmit = () => {
+    if (!uploadedDocumentId || !uploadedDocument || !uploadedFileKey || !uploadedFileSize) {
       toast.error("Please upload a file first");
       return;
     }
-
-    if (document.parse_status !== "success") {
+    if (uploadedDocument.parse_status !== "success") {
       toast.error("Please wait for the file to finish processing");
       return;
     }
-
     submitMutation.mutate({
       assignment_id: assignmentId!,
-      file_name: document.file_name,
+      file_name: uploadedDocument.file_name,
       file_key: uploadedFileKey,
       file_size_bytes: uploadedFileSize,
     });
   };
 
-  const toggleCriterion = (index: number) => {
-    setExpandedCriteria((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
-      } else {
-        next.add(index);
-      }
-      return next;
-    });
+  const cancelResubmit = () => {
+    setIsResubmitting(false);
+    setUploadedDocumentId(null);
+    setUploadedFileKey(null);
+    setUploadedFileSize(0);
   };
+
+  const breadcrumbs = [
+    { label: "My Courses", to: "/student/courses" },
+    { label: assignment?.title ?? "Assignment" },
+  ];
 
   if (assignmentLoading || rubricsLoading) {
     return (
-      <StudentLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="h-96 bg-gray-200 rounded-xl"></div>
-            <div className="h-96 bg-gray-200 rounded-xl"></div>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <div className="space-y-6">
+          <Skeleton className="h-9 w-1/2" />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <Skeleton className="h-80 w-full" />
+            <Skeleton className="h-80 w-full" />
           </div>
         </div>
-      </StudentLayout>
+      </AppShell>
     );
   }
 
-  if (!assignment) {
+  if (assignmentError || !assignment) {
     return (
-      <StudentLayout>
-        <div className="text-center py-12">
-          <h1 className="text-2xl font-bold text-gray-900">Assignment not found</h1>
-        </div>
-      </StudentLayout>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <ErrorState
+          title="Assignment not found"
+          description="This assignment may no longer be available."
+          onRetry={() => refetchAssignment()}
+        />
+      </AppShell>
     );
   }
 
-  const dueDate = new Date(assignment.due_date);
-  const isPast = dueDate < new Date();
+  const overdue = isPastDue(assignment.due_date);
   const hasSubmission = !!submission;
-  const isEvaluated = submission?.status === "evaluated" && !!evaluation;
+  const isGraded = submission?.status === "evaluated" && !!evaluation;
+  const canSubmitUpload =
+    !!uploadedDocumentId &&
+    !!uploadedDocument &&
+    uploadedDocument.parse_status === "success";
 
   return (
-    <StudentLayout>
+    <AppShell breadcrumbs={breadcrumbs}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 hover:bg-gray-100 rounded-lg transition"
-          >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{assignment.title}</h1>
-            <p className="text-sm text-gray-600 mt-1">Submit your work and view feedback</p>
-          </div>
-        </div>
+        <PageHeader
+          title={assignment.title}
+          description={`${assignment.max_score} points · due ${formatDateTime(
+            assignment.due_date,
+          )}`}
+          actions={
+            <Badge tone={overdue ? "danger" : "success"}>
+              {overdue ? "Closed" : "Open"}
+            </Badge>
+          }
+        />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Column - Assignment Info */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* LEFT — what's being asked */}
           <div className="space-y-6">
-            {/* Assignment Details */}
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Assignment Details
-              </h2>
-
-              {assignment.description && (
-                <p className="text-gray-700 mb-6">{assignment.description}</p>
-              )}
-
-              <div className="space-y-4">
-                <div className="flex items-center text-sm">
-                  <Calendar className="w-5 h-5 text-gray-400 mr-3" />
-                  <div>
-                    <p className="text-gray-600">Due Date</p>
-                    <p className={cn("font-medium", isPast ? "text-red-600" : "text-gray-900")}>
-                      {formatDateTime(assignment.due_date)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center text-sm">
-                  <Award className="w-5 h-5 text-gray-400 mr-3" />
-                  <div>
-                    <p className="text-gray-600">Max Score</p>
-                    <p className="font-medium text-gray-900">{assignment.max_score} points</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center text-sm">
-                  <Clock className="w-5 h-5 text-gray-400 mr-3" />
-                  <div>
-                    <p className="text-gray-600">Status</p>
-                    <p className={cn("font-medium", isPast ? "text-red-600" : "text-green-600")}>
-                      {isPast ? "Closed" : "Open"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Rubric */}
-            {rubrics.length > 0 && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  Grading Rubric
-                </h2>
-                <div className="space-y-3">
-                  {rubrics.map((rubric) => (
-                    <div
-                      key={rubric.id}
-                      className="border border-gray-200 rounded-lg p-4"
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <h3 className="font-medium text-gray-900">
-                          {rubric.criteria_name}
-                        </h3>
-                        <span className="text-sm font-medium text-primary">
-                          {rubric.max_points} pts ({rubric.weight}%)
-                        </span>
-                      </div>
-                      {rubric.description && (
-                        <p className="text-sm text-gray-600">{rubric.description}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <AssignmentBrief assignment={assignment} overdue={overdue} />
+            <RubricPreview rubrics={rubrics} />
           </div>
 
-          {/* Right Column - Submission Section */}
+          {/* RIGHT — the student's four-state flow */}
           <div className="space-y-6">
-            {/* State 1: Not Submitted */}
+            {/* State 1: nothing submitted yet */}
             {!hasSubmission && !isResubmitting && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  Submit Assignment
-                </h2>
-
-                <DocumentUploadZone
-                  accept=".pdf,.doc,.docx,.txt"
-                  docType={"submission" as DocumentType}
-                  courseId={assignment.course_id}
-                  assignmentId={assignmentId}
-                  onSuccess={handleUploadSuccess}
-                  onError={(error) => toast.error(error.message || "Upload failed")}
-                />
-
-                {uploadedDocumentId && document && (
-                  <div className="mt-4">
-                    <button
+              <Card>
+                <CardHeader>
+                  <div>
+                    <CardTitle>Submit your work</CardTitle>
+                    <p className="mt-0.5 text-sm text-content-muted">
+                      Upload your file, then submit it for grading.
+                    </p>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <DocumentUploadZone
+                    accept=".pdf,.doc,.docx,.txt"
+                    docType={"submission" as DocumentType}
+                    courseId={assignment.course_id}
+                    assignmentId={assignmentId}
+                    onSuccess={handleUploadSuccess}
+                    onError={(error) => toast.error(error.message || "Upload failed")}
+                  />
+                  {uploadedDocumentId && (
+                    <Button
+                      block
                       onClick={handleSubmit}
-                      disabled={
-                        submitMutation.isPending ||
-                        document.parse_status !== "success"
-                      }
-                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!canSubmitUpload}
+                      isLoading={submitMutation.isPending}
                     >
-                      {submitMutation.isPending ? (
-                        <>
-                          <Clock className="w-5 h-5 animate-spin" />
-                          Submitting...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5" />
-                          Submit Assignment
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* State 2: Submitted (Not Evaluated) */}
-            {hasSubmission && !isEvaluated && !isResubmitting && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  Submission Status
-                </h2>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                  <div className="flex items-center gap-3 mb-3">
-                    <CheckCircle className="w-6 h-6 text-blue-600" />
-                    <div>
-                      <p className="font-medium text-blue-900">Submitted Successfully</p>
-                      <p className="text-sm text-blue-700">
-                        {formatDateTime(submission.submitted_at)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-blue-800">
-                    <FileText className="w-4 h-4" />
-                    <span>{submission.file_name}</span>
-                  </div>
-                </div>
-
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-6 h-6 text-yellow-600" />
-                    <div>
-                      <p className="font-medium text-yellow-900">
-                        Evaluation in Progress
-                      </p>
-                      <p className="text-sm text-yellow-700">
-                        Your submission is being evaluated by AI. Check back soon!
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {!isPast && (
-                  <button
-                    onClick={() => setIsResubmitting(true)}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-primary text-primary hover:bg-primary-50 font-medium rounded-lg transition"
-                  >
-                    <RefreshCw className="w-5 h-5" />
-                    Resubmit Assignment
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* State 2b: Resubmitting */}
-            {isResubmitting && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    Resubmit Assignment
-                  </h2>
-                  <button
-                    onClick={() => {
-                      setIsResubmitting(false);
-                      setUploadedDocumentId(null);
-                    }}
-                    className="text-sm text-gray-600 hover:text-gray-900"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <DocumentUploadZone
-                  accept=".pdf,.doc,.docx,.txt"
-                  docType={"submission" as DocumentType}
-                  courseId={assignment.course_id}
-                  assignmentId={assignmentId}
-                  onSuccess={handleUploadSuccess}
-                  onError={(error) => toast.error(error.message || "Upload failed")}
-                />
-
-                {uploadedDocumentId && document && (
-                  <div className="mt-4">
-                    <button
-                      onClick={handleSubmit}
-                      disabled={
-                        submitMutation.isPending ||
-                        document.parse_status !== "success"
-                      }
-                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {submitMutation.isPending ? (
-                        <>
-                          <Clock className="w-5 h-5 animate-spin" />
-                          Submitting...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5" />
-                          Submit New Version
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* State 3: Evaluated */}
-            {isEvaluated && evaluation && (
-              <div className="space-y-6">
-                {/* Grade Display */}
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <h2 className="text-lg font-semibold text-gray-900 mb-4">Your Grade</h2>
-
-                  <div className="bg-gradient-to-br from-primary-50 to-primary-100 rounded-xl p-8 mb-6">
-                    <div className="text-center">
-                      <p className="text-sm font-medium text-primary mb-2">Final Score</p>
-                      <div className="text-6xl font-bold text-primary mb-2">
-                        {evaluation.final_score || evaluation.ai_score}
-                      </div>
-                      <div className="text-xl text-primary-700">
-                        out of {assignment.max_score}
-                      </div>
-                      {evaluation.ai_feedback && (
-                        <div className="text-lg text-primary-700 mt-2">
-                          {evaluation.ai_feedback.percentage.toFixed(1)}%
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {evaluation.approval_status !== "pending" && (
-                    <div className="flex items-center justify-center gap-2 mb-4">
-                      <CheckCircle className="w-5 h-5 text-green-600" />
-                      <span className="text-sm font-medium text-green-800">
-                        Grade {evaluation.approval_status === "approved" ? "Approved" : "Finalized"} by Professor
-                      </span>
-                    </div>
+                      {!submitMutation.isPending && <Upload className="h-4 w-4" />}
+                      Submit assignment
+                    </Button>
                   )}
-                </div>
+                </CardContent>
+              </Card>
+            )}
 
-                {/* Feedback */}
-                {evaluation.ai_feedback && (
-                  <>
-                    {/* Criteria Breakdown */}
-                    <div className="bg-white rounded-xl shadow-sm p-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                        Criteria Breakdown
-                      </h3>
-                      <div className="space-y-3">
-                        {evaluation.ai_feedback.criteria_scores.map((criterion, index) => (
-                          <div
-                            key={index}
-                            className="border border-gray-200 rounded-lg overflow-hidden"
-                          >
-                            <button
-                              onClick={() => toggleCriterion(index)}
-                              className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition"
-                            >
-                              <div>
-                                <h4 className="font-medium text-gray-900 text-left">
-                                  {criterion.criterion_name}
-                                </h4>
-                                <p className="text-sm text-gray-600">
-                                  {criterion.awarded} / {criterion.max} points
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={cn(
-                                    "text-sm font-medium px-3 py-1 rounded-full",
-                                    criterion.awarded === criterion.max
-                                      ? "bg-green-100 text-green-800"
-                                      : criterion.awarded >= criterion.max * 0.7
-                                      ? "bg-amber-100 text-amber-800"
-                                      : "bg-red-100 text-red-800"
-                                  )}
-                                >
-                                  {((criterion.awarded / criterion.max) * 100).toFixed(0)}%
-                                </span>
-                                {expandedCriteria.has(index) ? (
-                                  <ChevronUp className="w-5 h-5 text-gray-400" />
-                                ) : (
-                                  <ChevronDown className="w-5 h-5 text-gray-400" />
-                                )}
-                              </div>
-                            </button>
-                            {expandedCriteria.has(index) && (
-                              <div className="px-4 pb-4 bg-gray-50 border-t border-gray-200">
-                                <p className="text-sm text-gray-700 mt-3">
-                                  {criterion.reasoning}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+            {/* State 2: submitted, awaiting or undergoing grading */}
+            {hasSubmission && !isGraded && !isResubmitting && (
+              <>
+                <SubmissionViewer
+                  title="Your submission"
+                  fileName={submission.file_name}
+                  fileUrl={submission.file_url}
+                  submittedAt={submission.submitted_at}
+                  status={submission.status}
+                />
+
+                <Card>
+                  <CardContent>
+                    <div className="flex items-start gap-3">
+                      {submission.status === "evaluating" ? (
+                        <Loader2
+                          className="mt-0.5 h-5 w-5 flex-shrink-0 text-processing motion-safe:animate-spin"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <CheckCircle2
+                          className="mt-0.5 h-5 w-5 flex-shrink-0 text-success"
+                          aria-hidden="true"
+                        />
+                      )}
+                      <div role="status">
+                        <p className="font-medium text-content">
+                          {submission.status === "evaluating"
+                            ? "Being graded"
+                            : "Submitted successfully"}
+                        </p>
+                        <p className="mt-0.5 text-sm text-content-soft">
+                          {submission.status === "evaluating"
+                            ? "Your grade will appear here automatically once your professor has reviewed it."
+                            : "Your work is in. You'll see your grade once it's been graded and released."}
+                        </p>
                       </div>
                     </div>
+                  </CardContent>
+                </Card>
 
-                    {/* Strengths & Weaknesses */}
-                    <div className="grid grid-cols-1 gap-4">
-                      {evaluation.strengths && evaluation.strengths.length > 0 && (
-                        <div className="bg-white rounded-xl shadow-sm p-6">
-                          <h3 className="text-sm font-semibold text-green-900 mb-3 flex items-center gap-2">
-                            <CheckCircle className="w-4 h-4" />
-                            Strengths
-                          </h3>
-                          <div className="space-y-2">
-                            {evaluation.strengths.map((strength, index) => (
-                              <div
-                                key={index}
-                                className="bg-green-50 border border-green-200 rounded-lg p-3"
-                              >
-                                <p className="text-sm text-green-800">{strength}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {evaluation.weaknesses && evaluation.weaknesses.length > 0 && (
-                        <div className="bg-white rounded-xl shadow-sm p-6">
-                          <h3 className="text-sm font-semibold text-amber-900 mb-3 flex items-center gap-2">
-                            <AlertCircle className="w-4 h-4" />
-                            Areas for Improvement
-                          </h3>
-                          <div className="space-y-2">
-                            {evaluation.weaknesses.map((weakness, index) => (
-                              <div
-                                key={index}
-                                className="bg-amber-50 border border-amber-200 rounded-lg p-3"
-                              >
-                                <p className="text-sm text-amber-800">{weakness}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {evaluation.missing_topics && evaluation.missing_topics.length > 0 && (
-                        <div className="bg-white rounded-xl shadow-sm p-6">
-                          <h3 className="text-sm font-semibold text-red-900 mb-3">
-                            Missing Topics
-                          </h3>
-                          <div className="flex flex-wrap gap-2">
-                            {evaluation.missing_topics.map((topic, index) => (
-                              <span
-                                key={index}
-                                className="bg-red-50 border border-red-200 text-red-800 text-sm px-3 py-1 rounded-full"
-                              >
-                                {topic}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Professor Feedback */}
-                    {evaluation.professor_feedback && (
-                      <div className="bg-white rounded-xl shadow-sm p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                          Professor Feedback
-                        </h3>
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                          <p className="text-gray-700 whitespace-pre-wrap">
-                            {evaluation.professor_feedback}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </>
+                {!overdue && (
+                  <Button
+                    variant="outline"
+                    block
+                    onClick={() => setIsResubmitting(true)}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Replace my submission
+                  </Button>
                 )}
-              </div>
+              </>
+            )}
+
+            {/* State 3: replacing an existing submission */}
+            {isResubmitting && (
+              <Card>
+                <CardHeader>
+                  <div className="min-w-0">
+                    <CardTitle>Replace your submission</CardTitle>
+                    <p className="mt-0.5 text-sm text-content-muted">
+                      Uploading a new file replaces the one you submitted.
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={cancelResubmit}>
+                    <X className="h-4 w-4" />
+                    Cancel
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <DocumentUploadZone
+                    accept=".pdf,.doc,.docx,.txt"
+                    docType={"submission" as DocumentType}
+                    courseId={assignment.course_id}
+                    assignmentId={assignmentId}
+                    onSuccess={handleUploadSuccess}
+                    onError={(error) => toast.error(error.message || "Upload failed")}
+                  />
+                  {uploadedDocumentId && (
+                    <Button
+                      block
+                      onClick={handleSubmit}
+                      disabled={!canSubmitUpload}
+                      isLoading={submitMutation.isPending}
+                    >
+                      {!submitMutation.isPending && <Upload className="h-4 w-4" />}
+                      Submit new version
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* State 4: graded */}
+            {isGraded && evaluation && !isResubmitting && (
+              <GradedResult
+                evaluation={evaluation}
+                maxScore={assignment.max_score}
+                submissionFileName={submission.file_name}
+                submissionFileUrl={submission.file_url}
+                submittedAt={submission.submitted_at}
+              />
             )}
           </div>
         </div>
       </div>
-    </StudentLayout>
+    </AppShell>
+  );
+}
+
+function AssignmentBrief({
+  assignment,
+  overdue,
+}: {
+  assignment: AssignmentOut;
+  overdue: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Assignment details</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {assignment.description && (
+          <p className="whitespace-pre-wrap leading-relaxed text-content-soft">
+            {assignment.description}
+          </p>
+        )}
+        <dl className="space-y-3">
+          <div className="flex items-center gap-2.5 text-sm">
+            <CalendarClock
+              className="h-4 w-4 flex-shrink-0 text-content-muted"
+              aria-hidden="true"
+            />
+            <dt className="text-content-muted">Due</dt>
+            <dd className={cn("font-medium", overdue ? "text-danger-fg" : "text-content")}>
+              {formatDateTime(assignment.due_date)}
+            </dd>
+          </div>
+          <div className="flex items-center gap-2.5 text-sm">
+            <Award
+              className="h-4 w-4 flex-shrink-0 text-content-muted"
+              aria-hidden="true"
+            />
+            <dt className="text-content-muted">Worth</dt>
+            <dd className="font-medium text-content">{assignment.max_score} points</dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RubricPreview({ rubrics }: { rubrics: RubricOut[] }) {
+  if (rubrics.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>How you'll be graded</CardTitle>
+          <p className="mt-0.5 text-sm text-content-muted">
+            Your work is scored against these criteria.
+          </p>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-3">
+          {rubrics.map((rubric) => (
+            <li
+              key={rubric.id}
+              className="rounded-md border border-edge bg-surface-raised p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h4 className="font-medium text-content">{rubric.criteria_name}</h4>
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <Badge tone="neutral">{rubric.max_points} pts</Badge>
+                  <Badge tone="neutral">{rubric.weight}%</Badge>
+                </div>
+              </div>
+              {rubric.description && (
+                <p className="mt-1.5 text-sm text-content-soft">{rubric.description}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GradedResult({
+  evaluation,
+  maxScore,
+  submissionFileName,
+  submissionFileUrl,
+  submittedAt,
+}: {
+  evaluation: unknown;
+  maxScore: string;
+  submissionFileName: string;
+  submissionFileUrl: string;
+  submittedAt: string;
+}) {
+  const summary = readEvaluationSummary(evaluation);
+  const record = evaluation as Record<string, unknown>;
+  const score =
+    (typeof record.final_score === "string" ? record.final_score : undefined) ??
+    (typeof record.ai_score === "string" ? record.ai_score : undefined) ??
+    null;
+  const professorFeedback =
+    typeof record.professor_feedback === "string" ? record.professor_feedback : undefined;
+  const strengths = Array.isArray(record.strengths)
+    ? (record.strengths as string[])
+    : null;
+  const weaknesses = Array.isArray(record.weaknesses)
+    ? (record.weaknesses as string[])
+    : null;
+  const missingTopics = Array.isArray(record.missing_topics)
+    ? (record.missing_topics as string[])
+    : null;
+
+  return (
+    <div className="space-y-6">
+      <GradeDisplay
+        label="Your grade"
+        score={score}
+        outOf={maxScore}
+        percentage={summary.percentage}
+        tone="final"
+        caption={
+          <p className="flex items-center justify-center gap-1.5 text-sm text-content-soft">
+            <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
+            Reviewed and released by your professor
+          </p>
+        }
+      />
+
+      {summary.criteria.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Score breakdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {summary.criteria.map((criterion, index) => (
+                <RubricCriterionRow
+                  key={`${criterion.criterion_name}-${index}`}
+                  criterionName={criterion.criterion_name}
+                  awarded={criterion.awarded}
+                  max={criterion.max}
+                  reasoning={criterion.reasoning}
+                  reasoningLabel="Why you got this score"
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {summary.criteria.length === 0 && (
+        <Card>
+          <CardContent>
+            <div className="flex items-start gap-3">
+              <ClipboardList
+                className="mt-0.5 h-5 w-5 flex-shrink-0 text-content-muted"
+                aria-hidden="true"
+              />
+              <p className="text-sm text-content-soft">
+                A per-criterion breakdown isn't available for this grade.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <AIReasoningPanel
+        title="Your feedback"
+        strengths={strengths}
+        weaknesses={weaknesses}
+        missingTopics={missingTopics}
+      />
+
+      {(professorFeedback || summary.overallFeedback) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Professor's comments</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap leading-relaxed text-content-soft">
+              {professorFeedback || summary.overallFeedback}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <SubmissionViewer
+        title="What you submitted"
+        fileName={submissionFileName}
+        fileUrl={submissionFileUrl}
+        submittedAt={submittedAt}
+      />
+    </div>
   );
 }

@@ -3,8 +3,10 @@ Celery tasks for document processing and grading.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 import structlog
+from celery.exceptions import Retry
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
@@ -18,13 +20,38 @@ from app.rag.embeddings import get_embedding_service
 from app.rag.parsers import parse_document
 from app.services.s3_service import S3Service
 
+if TYPE_CHECKING:
+    from app.models.evaluation import Evaluation
+
 logger = structlog.get_logger(__name__)
 
+# How long evaluation waits for document parsing to finish before giving up.
+# 5 attempts x 60s ~= 5 minutes.
+PROCESSING_WAIT_SECONDS = 60
+PROCESSING_WAIT_MAX_RETRIES = 5
 
-@celery_app.task(name="gradeai.process_submission", bind=True, max_retries=3)
-def process_submission(self, submission_id: str) -> dict:
-    logger.info("processing_submission", submission_id=submission_id)
-    return {"submission_id": submission_id, "status": "processed"}
+# Reasons an evaluation must not be re-graded by AI, in priority order.
+MANUAL_EVALUATION_EXISTS = "manual_evaluation_exists"
+PROFESSOR_OVERRIDE_EXISTS = "professor_override_exists"
+PROFESSOR_APPROVAL_EXISTS = "professor_approval_exists"
+
+
+def human_decision_reason(evaluation: "Evaluation") -> str | None:
+    """
+    Return why AI grading must not touch this evaluation, or None if it is safe
+    to (re-)grade.
+
+    Shared by the Celery task and the trigger endpoint so both apply exactly the
+    same rule. A system auto-approval (AUTO grading mode) leaves ``approved_by``
+    NULL and is therefore still re-gradable; anything a professor decided is not.
+    """
+    if evaluation.ai_score is None:
+        return MANUAL_EVALUATION_EXISTS
+    if evaluation.approval_status == ApprovalStatus.OVERRIDDEN:
+        return PROFESSOR_OVERRIDE_EXISTS
+    if evaluation.approval_status == ApprovalStatus.APPROVED and evaluation.approved_by is not None:
+        return PROFESSOR_APPROVAL_EXISTS
+    return None
 
 
 @celery_app.task(name="gradeai.evaluate_submission", bind=True, max_retries=3)
@@ -118,9 +145,17 @@ def evaluate_submission(self, submission_id: str) -> dict:
                 if document.parse_status == ParseStatus.FAILED:
                     raise ValueError("Document parsing failed. Cannot evaluate.")
                 else:
-                    # Still processing - retry after 60s
-                    logger.info("document_still_processing", document_id=str(document.id))
-                    raise self.retry(countdown=60, max_retries=5)
+                    # Parsing hasn't finished yet. Wait and re-check, up to
+                    # PROCESSING_WAIT_MAX_RETRIES times (~5 minutes total).
+                    logger.info(
+                        "document_still_processing",
+                        document_id=str(document.id),
+                        attempt=self.request.retries + 1,
+                    )
+                    raise self.retry(
+                        countdown=PROCESSING_WAIT_SECONDS,
+                        max_retries=PROCESSING_WAIT_MAX_RETRIES,
+                    )
 
             if not document.parsed_text:
                 raise ValueError("Document has no parsed text")
@@ -190,18 +225,30 @@ def evaluate_submission(self, submission_id: str) -> dict:
             )
 
             if existing_eval:
-                # Guard against overwriting manual evaluations
-                if existing_eval.ai_score is None:
+                # Never overwrite a grading decision a human already made.
+                #
+                # `ai_score is None` catches purely manual evaluations. The
+                # approval checks additionally protect an AI grade that a
+                # professor has since approved or overridden: those still carry
+                # a non-null ai_score, so without this a re-trigger would
+                # silently replace the professor's score and feedback (and, in
+                # AUTO mode, re-approve the AI's number over the top).
+                #
+                # A system auto-approval leaves approved_by NULL, so AUTO-mode
+                # grades that no human has touched remain re-gradable.
+                skip_reason = human_decision_reason(existing_eval)
+                if skip_reason is not None:
                     logger.warning(
-                        "skipped_ai_overwrite_of_manual_evaluation",
+                        "skipped_ai_overwrite_of_human_decision",
                         evaluation_id=str(existing_eval.id),
                         submission_id=submission_id,
+                        reason=skip_reason,
+                        approval_status=existing_eval.approval_status.value,
                     )
-                    # Manual evaluation exists - do not overwrite with AI
                     return {
                         "submission_id": submission_id,
                         "status": "skipped",
-                        "reason": "manual_evaluation_exists",
+                        "reason": skip_reason,
                     }
 
                 # Update existing evaluation
@@ -348,6 +395,13 @@ def evaluate_submission(self, submission_id: str) -> dict:
             "total_score": evaluation_result.total_score,
             "confidence_score": evaluation_result.confidence_score,
         }
+
+    except Retry:
+        # celery.exceptions.Retry subclasses Exception, so without this it would
+        # be captured by the handler below and re-raised with different options
+        # — silently discarding the countdown and max_retries chosen above, and
+        # logging a "failed" event for what is a normal wait.
+        raise
 
     except Exception as exc:
         logger.error(
@@ -639,35 +693,6 @@ def process_document(self, document_id: str) -> dict:
         else:
             logger.error("max_retries_exceeded", document_id=document_id)
             raise
-
-
-def _extract_file_key_from_url(file_url: str) -> str:
-    """
-    Extract S3 file key from presigned URL or file URL.
-
-    Args:
-        file_url: Full S3 URL (presigned or direct)
-
-    Returns:
-        File key (path within bucket)
-    """
-    # Remove query parameters (presigned URL params)
-    if "?" in file_url:
-        file_url = file_url.split("?")[0]
-
-    # Extract path after bucket name
-    # Format: http://minio:9000/bucket-name/file/key/path.pdf
-    parts = file_url.split("/")
-
-    # Find bucket name and get everything after it
-    try:
-        # Typically: ['http:', '', 'minio:9000', 'bucket-name', 'file', 'key', ...]
-        bucket_index = 3  # Index of bucket name
-        file_key = "/".join(parts[bucket_index + 1 :])
-        return file_key
-    except IndexError as exc:
-        logger.error("failed_to_extract_file_key", url=file_url)
-        raise ValueError(f"Invalid file URL format: {file_url}") from exc
 
 
 def _download_from_s3(s3_service: S3Service, file_key: str) -> bytes:

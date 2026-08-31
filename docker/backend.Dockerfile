@@ -38,7 +38,10 @@ USER gradeai
 
 EXPOSE 8000
 
+# Liveness, not readiness: this check restarts the container, so it must not
+# fail merely because a dependency is briefly unreachable. Readiness (which
+# returns 503 when the DB or Redis is down) belongs on the load balancer.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD curl -f http://localhost:8000/api/v1/health/live || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

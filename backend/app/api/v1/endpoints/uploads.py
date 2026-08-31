@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user, get_db
 from app.core.enums import ParseStatus
+from app.core.rate_limit import RateLimiter
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment
 from app.models.course import Course
@@ -97,6 +98,13 @@ async def presign_upload(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    _: None = Depends(
+        RateLimiter(
+            "presign",
+            limit=get_settings().rate_limit_presign_per_minute,
+            window_seconds=60,
+        )
+    ),
 ) -> PresignResponse:
     """Generate a presigned URL for uploading a file to S3."""
 

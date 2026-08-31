@@ -7,6 +7,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.enums import UserRole
 from app.core.security import decode_token
 from app.db.session import get_db as _get_db
@@ -16,8 +17,23 @@ from app.models.user import User
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 http_bearer = HTTPBearer(auto_error=False)
 
-REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60
-BLACKLIST_TTL_SECONDS = 15 * 60
+
+def refresh_ttl_seconds() -> int:
+    """Redis allowlist lifetime for a refresh token; matches the token's own exp."""
+    return get_settings().refresh_token_expire_days * 24 * 60 * 60
+
+
+def blacklist_ttl_seconds() -> int:
+    """
+    How long a revoked access token stays blacklisted.
+
+    Must cover the token's full remaining life, otherwise a logged-out token
+    would become usable again once the blacklist entry expired. Deriving it from
+    the same setting that sets the token's lifetime keeps the two in step — when
+    this was hardcoded at 15 minutes, raising ACCESS_TOKEN_EXPIRE_MINUTES would
+    have opened exactly that window.
+    """
+    return get_settings().access_token_expire_minutes * 60
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

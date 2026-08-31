@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -30,10 +30,39 @@ from app.schemas.evaluation import (
     OverrideEvaluationRequest,
     StudentEvaluationOut,
 )
-from app.tasks.grading import evaluate_submission
+from app.services.audit_service import (
+    ACTION_EVALUATION_APPROVED,
+    ACTION_EVALUATION_MANUAL_CREATED,
+    ACTION_EVALUATION_OVERRIDDEN,
+    ENTITY_EVALUATION,
+    record_audit_log,
+)
+from app.tasks.grading import (
+    MANUAL_EVALUATION_EXISTS,
+    PROFESSOR_APPROVAL_EXISTS,
+    PROFESSOR_OVERRIDE_EXISTS,
+    evaluate_submission,
+    human_decision_reason,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+# Professor-facing explanations for a refused re-grade.
+TRIGGER_CONFLICT_DETAIL = {
+    MANUAL_EVALUATION_EXISTS: (
+        "This submission was graded manually. Re-running AI grading would discard "
+        "that grade, so it was not started."
+    ),
+    PROFESSOR_OVERRIDE_EXISTS: (
+        "You already overrode this grade. Re-running AI grading would discard your "
+        "score and feedback, so it was not started."
+    ),
+    PROFESSOR_APPROVAL_EXISTS: (
+        "This grade was already approved. Re-running AI grading would discard the "
+        "approved result, so it was not started."
+    ),
+}
 
 
 @router.get("/pending", response_model=list[EvaluationListOut])
@@ -153,6 +182,7 @@ async def get_evaluation_detail(
 async def approve_evaluation(
     evaluation_id: uuid.UUID,
     request: ApproveEvaluationRequest,
+    http_request: Request,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationOut:
@@ -201,6 +231,9 @@ async def approve_evaluation(
             ),
         )
 
+    # Captured before the UPDATE so the audit entry records what was approved.
+    ai_score_before = evaluation.ai_score
+
     # Approve via an atomic compare-and-swap: the UPDATE only applies if the row
     # is still PENDING. This closes the race where two concurrent approve/override
     # calls both pass the pre-check above and the second silently clobbers the first.
@@ -230,6 +263,21 @@ async def approve_evaluation(
     # Update submission status
     evaluation.submission.status = SubmissionStatus.EVALUATED
 
+    await record_audit_log(
+        db,
+        user_id=current_user.id,
+        action=ACTION_EVALUATION_APPROVED,
+        entity_type=ENTITY_EVALUATION,
+        entity_id=evaluation_id,
+        old_value={"approval_status": ApprovalStatus.PENDING.value, "final_score": None},
+        new_value={
+            "approval_status": ApprovalStatus.APPROVED.value,
+            "final_score": float(ai_score_before),
+            "professor_feedback": request.professor_feedback,
+        },
+        request=http_request,
+    )
+
     await db.commit()
     await db.refresh(evaluation)
 
@@ -247,6 +295,7 @@ async def approve_evaluation(
 async def override_evaluation(
     evaluation_id: uuid.UUID,
     request: OverrideEvaluationRequest,
+    http_request: Request,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationOut:
@@ -297,6 +346,9 @@ async def override_evaluation(
             detail=f"Evaluation already {evaluation.approval_status.value}",
         )
 
+    # Captured before the UPDATE so the audit entry records what was replaced.
+    ai_score_before = evaluation.ai_score
+
     # Override via an atomic compare-and-swap: the UPDATE only applies if the row
     # is still PENDING, closing the concurrent approve/override clobber race.
     values = {
@@ -330,6 +382,24 @@ async def override_evaluation(
     # Update submission status
     evaluation.submission.status = SubmissionStatus.EVALUATED
 
+    await record_audit_log(
+        db,
+        user_id=current_user.id,
+        action=ACTION_EVALUATION_OVERRIDDEN,
+        entity_type=ENTITY_EVALUATION,
+        entity_id=evaluation_id,
+        old_value={
+            "approval_status": ApprovalStatus.PENDING.value,
+            "ai_score": float(ai_score_before) if ai_score_before is not None else None,
+        },
+        new_value={
+            "approval_status": ApprovalStatus.OVERRIDDEN.value,
+            "final_score": float(request.final_score),
+            "professor_feedback": request.professor_feedback,
+        },
+        request=http_request,
+    )
+
     await db.commit()
     await db.refresh(evaluation)
 
@@ -348,6 +418,7 @@ async def override_evaluation(
 async def create_manual_evaluation(
     submission_id: uuid.UUID,
     request: ManualEvaluationCreate,
+    http_request: Request,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationOut:
@@ -429,6 +500,26 @@ async def create_manual_evaluation(
     # Update submission status
     submission.status = SubmissionStatus.EVALUATED
 
+    # Flush so the generated primary key is available to reference in the audit
+    # entry; the commit below still makes both atomic.
+    await db.flush()
+
+    await record_audit_log(
+        db,
+        user_id=current_user.id,
+        action=ACTION_EVALUATION_MANUAL_CREATED,
+        entity_type=ENTITY_EVALUATION,
+        entity_id=evaluation.id,
+        old_value=None,
+        new_value={
+            "approval_status": ApprovalStatus.OVERRIDDEN.value,
+            "final_score": float(request.final_score),
+            "professor_feedback": request.professor_feedback,
+            "ai_score": None,
+        },
+        request=http_request,
+    )
+
     await db.commit()
     await db.refresh(evaluation)
 
@@ -474,6 +565,25 @@ async def trigger_evaluation(
         raise HTTPException(
             status_code=403, detail="Not authorized to trigger evaluation for this submission"
         )
+
+    # Refuse to re-grade a decision a human already made. Without this, the
+    # queued task would load the existing evaluation and (in AUTO mode) replace
+    # the professor's score and feedback with a fresh AI result.
+    existing = await db.execute(select(Evaluation).where(Evaluation.submission_id == submission_id))
+    existing_eval = existing.scalar_one_or_none()
+    if existing_eval is not None:
+        blocked_reason = human_decision_reason(existing_eval)
+        if blocked_reason is not None:
+            logger.info(
+                "evaluation_trigger_rejected",
+                submission_id=str(submission_id),
+                professor_id=str(current_user.id),
+                reason=blocked_reason,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=TRIGGER_CONFLICT_DETAIL[blocked_reason],
+            )
 
     # Queue evaluation task
     task = evaluate_submission.delay(str(submission_id))

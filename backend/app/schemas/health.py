@@ -11,3 +11,10 @@ class HealthResponse(BaseModel):
     db: ServiceStatus
     redis: ServiceStatus
     chromadb: ServiceStatus
+
+
+class LivenessResponse(BaseModel):
+    """Process-level liveness. Deliberately checks no dependencies."""
+
+    status: str = Field(default="ok", description="Always 'ok' if the process responds")
+    version: str

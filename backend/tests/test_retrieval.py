@@ -1,7 +1,7 @@
 """
-Unit tests for RetrievalService.retrieve_context() — verifies the rubric
-n_results fix (50 -> 5) and that where_filter conditions are correct for
-each document type, per RETRIEVAL_CONFIG_AUDIT_REPORT.md.
+Unit tests for RetrievalService.retrieve_context() — verifies the per-doc-type
+n_results values (rubric retrieves 5, not 50) and that the where_filter
+conditions are correct for each document type.
 
 ChromaDBClient and EmbeddingService are mocked; these tests only verify
 the arguments RetrievalService passes to chroma.query(), not ChromaDB
