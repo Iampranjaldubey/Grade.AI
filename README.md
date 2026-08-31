@@ -207,5 +207,4 @@ Open a pull request; CI must be green before merge.
 
 ## License
 
-No licence has been chosen yet. Until one is added, this code is "all rights reserved" by default
-and cannot be reused. Add a `LICENSE` file to change that.
+Released under the [MIT License](LICENSE).
