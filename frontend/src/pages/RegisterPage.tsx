@@ -17,6 +17,9 @@ const registerSchema = z
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
     role: z.enum(["professor", "student"]),
+    // Institutions can require a code for staff sign-ups; blank is valid when
+    // the server has none configured.
+    registrationCode: z.string().optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match",
@@ -95,7 +98,13 @@ export function RegisterPage() {
 
   const onSubmit = async (data: RegisterFormData) => {
     try {
-      await registerUser(data.name, data.email, data.password, data.role);
+      await registerUser(
+        data.name,
+        data.email,
+        data.password,
+        data.role,
+        data.registrationCode?.trim() || undefined,
+      );
       toast.success("Account created successfully!");
     } catch {
       // Error handled in store and toast
@@ -156,6 +165,28 @@ export function RegisterPage() {
           </div>
           <input type="hidden" {...register("role")} />
         </div>
+
+        {/* Staff sign-ups may require an institution code */}
+        {selectedRole === "professor" && (
+          <div>
+            <label htmlFor="registrationCode" className={labelClass}>
+              Registration code
+            </label>
+            <input
+              {...register("registrationCode")}
+              id="registrationCode"
+              type="text"
+              autoComplete="off"
+              className={cn(inputClass, "border-rule")}
+              placeholder="Provided by your institution"
+              aria-describedby="registrationCode-hint"
+            />
+            <p id="registrationCode-hint" className="mt-1.5 font-sans text-[13px] text-muted">
+              Required if your institution restricts professor accounts. Leave blank if you
+              weren't given one.
+            </p>
+          </div>
+        )}
 
         {/* Name field */}
         <div>

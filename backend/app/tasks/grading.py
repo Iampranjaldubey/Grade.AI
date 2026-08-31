@@ -3,6 +3,7 @@ Celery tasks for document processing and grading.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -18,7 +19,33 @@ from app.rag.embeddings import get_embedding_service
 from app.rag.parsers import parse_document
 from app.services.s3_service import S3Service
 
+if TYPE_CHECKING:
+    from app.models.evaluation import Evaluation
+
 logger = structlog.get_logger(__name__)
+
+# Reasons an evaluation must not be re-graded by AI, in priority order.
+MANUAL_EVALUATION_EXISTS = "manual_evaluation_exists"
+PROFESSOR_OVERRIDE_EXISTS = "professor_override_exists"
+PROFESSOR_APPROVAL_EXISTS = "professor_approval_exists"
+
+
+def human_decision_reason(evaluation: "Evaluation") -> str | None:
+    """
+    Return why AI grading must not touch this evaluation, or None if it is safe
+    to (re-)grade.
+
+    Shared by the Celery task and the trigger endpoint so both apply exactly the
+    same rule. A system auto-approval (AUTO grading mode) leaves ``approved_by``
+    NULL and is therefore still re-gradable; anything a professor decided is not.
+    """
+    if evaluation.ai_score is None:
+        return MANUAL_EVALUATION_EXISTS
+    if evaluation.approval_status == ApprovalStatus.OVERRIDDEN:
+        return PROFESSOR_OVERRIDE_EXISTS
+    if evaluation.approval_status == ApprovalStatus.APPROVED and evaluation.approved_by is not None:
+        return PROFESSOR_APPROVAL_EXISTS
+    return None
 
 
 @celery_app.task(name="gradeai.process_submission", bind=True, max_retries=3)
@@ -190,18 +217,30 @@ def evaluate_submission(self, submission_id: str) -> dict:
             )
 
             if existing_eval:
-                # Guard against overwriting manual evaluations
-                if existing_eval.ai_score is None:
+                # Never overwrite a grading decision a human already made.
+                #
+                # `ai_score is None` catches purely manual evaluations. The
+                # approval checks additionally protect an AI grade that a
+                # professor has since approved or overridden: those still carry
+                # a non-null ai_score, so without this a re-trigger would
+                # silently replace the professor's score and feedback (and, in
+                # AUTO mode, re-approve the AI's number over the top).
+                #
+                # A system auto-approval leaves approved_by NULL, so AUTO-mode
+                # grades that no human has touched remain re-gradable.
+                skip_reason = human_decision_reason(existing_eval)
+                if skip_reason is not None:
                     logger.warning(
-                        "skipped_ai_overwrite_of_manual_evaluation",
+                        "skipped_ai_overwrite_of_human_decision",
                         evaluation_id=str(existing_eval.id),
                         submission_id=submission_id,
+                        reason=skip_reason,
+                        approval_status=existing_eval.approval_status.value,
                     )
-                    # Manual evaluation exists - do not overwrite with AI
                     return {
                         "submission_id": submission_id,
                         "status": "skipped",
-                        "reason": "manual_evaluation_exists",
+                        "reason": skip_reason,
                     }
 
                 # Update existing evaluation

@@ -1,10 +1,13 @@
 import uuid
+from hmac import compare_digest
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.deps import (
     BLACKLIST_TTL_SECONDS,
     REFRESH_TTL_SECONDS,
@@ -12,6 +15,8 @@ from app.core.deps import (
     get_db,
     get_redis,
 )
+from app.core.enums import UserRole
+from app.core.rate_limit import RateLimiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -30,11 +35,47 @@ from app.schemas.user import (
     UserRead,
 )
 
+logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 LOCKOUT_TTL_SECONDS = 15 * 60
 MAX_LOGIN_ATTEMPTS = 5
 ACCESS_TOKEN_EXPIRES_IN = 900
+
+# Roles that can create courses, see other students' work, or grade. These must
+# not be self-assignable from a public endpoint without proof of authorisation.
+PRIVILEGED_ROLES = frozenset({UserRole.PROFESSOR, UserRole.TA, UserRole.ADMIN})
+
+
+def _verify_privileged_role_allowed(payload: UserCreate) -> None:
+    """
+    Reject self-assignment of a privileged role unless the caller supplies the
+    configured registration code.
+
+    When no code is configured the check is skipped, which keeps local
+    development and the test suite frictionless. Production cannot reach that
+    state: ``Settings.validate_required`` refuses to boot without a code set.
+    """
+    if payload.role not in PRIVILEGED_ROLES:
+        return
+
+    expected = get_settings().professor_registration_code
+    if not expected:
+        return
+
+    supplied = (payload.registration_code or "").strip()
+    if not compare_digest(supplied, expected):
+        logger.warning(
+            "privileged_registration_rejected",
+            email=payload.email,
+            requested_role=payload.role.value,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"A valid registration code is required to sign up as a " f"{payload.role.value}."
+            ),
+        )
 
 
 async def _store_refresh_token(redis: Redis, refresh_token: str, user_id: uuid.UUID) -> None:
@@ -75,7 +116,16 @@ async def register(
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    _: None = Depends(
+        RateLimiter(
+            "register",
+            limit=get_settings().rate_limit_register_per_hour,
+            window_seconds=3600,
+        )
+    ),
 ) -> TokenResponse:
+    _verify_privileged_role_allowed(payload)
+
     result = await db.execute(select(User).where(User.email == payload.email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(

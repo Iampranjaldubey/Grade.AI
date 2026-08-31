@@ -30,10 +30,32 @@ from app.schemas.evaluation import (
     OverrideEvaluationRequest,
     StudentEvaluationOut,
 )
-from app.tasks.grading import evaluate_submission
+from app.tasks.grading import (
+    MANUAL_EVALUATION_EXISTS,
+    PROFESSOR_APPROVAL_EXISTS,
+    PROFESSOR_OVERRIDE_EXISTS,
+    evaluate_submission,
+    human_decision_reason,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+# Professor-facing explanations for a refused re-grade.
+TRIGGER_CONFLICT_DETAIL = {
+    MANUAL_EVALUATION_EXISTS: (
+        "This submission was graded manually. Re-running AI grading would discard "
+        "that grade, so it was not started."
+    ),
+    PROFESSOR_OVERRIDE_EXISTS: (
+        "You already overrode this grade. Re-running AI grading would discard your "
+        "score and feedback, so it was not started."
+    ),
+    PROFESSOR_APPROVAL_EXISTS: (
+        "This grade was already approved. Re-running AI grading would discard the "
+        "approved result, so it was not started."
+    ),
+}
 
 
 @router.get("/pending", response_model=list[EvaluationListOut])
@@ -474,6 +496,25 @@ async def trigger_evaluation(
         raise HTTPException(
             status_code=403, detail="Not authorized to trigger evaluation for this submission"
         )
+
+    # Refuse to re-grade a decision a human already made. Without this, the
+    # queued task would load the existing evaluation and (in AUTO mode) replace
+    # the professor's score and feedback with a fresh AI result.
+    existing = await db.execute(select(Evaluation).where(Evaluation.submission_id == submission_id))
+    existing_eval = existing.scalar_one_or_none()
+    if existing_eval is not None:
+        blocked_reason = human_decision_reason(existing_eval)
+        if blocked_reason is not None:
+            logger.info(
+                "evaluation_trigger_rejected",
+                submission_id=str(submission_id),
+                professor_id=str(current_user.id),
+                reason=blocked_reason,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=TRIGGER_CONFLICT_DETAIL[blocked_reason],
+            )
 
     # Queue evaluation task
     task = evaluate_submission.delay(str(submission_id))

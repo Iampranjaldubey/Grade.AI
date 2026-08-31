@@ -20,4 +20,10 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Bound every task. With acks_late and a prefetch of 1, a task that hangs
+    # (most likely a stalled LLM or S3 call) would otherwise hold its worker
+    # slot indefinitely. The soft limit raises inside the task so it follows the
+    # normal retry path; the hard limit kills anything that ignores it.
+    task_soft_time_limit=settings.celery_task_soft_time_limit,
+    task_time_limit=settings.celery_task_time_limit,
 )
