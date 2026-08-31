@@ -643,7 +643,7 @@ function SubmissionRow({ submission, isEvaluating, onEvaluate, getStatusColor }:
       </td>
       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
         {evaluation ? (
-          <span className="font-medium">{evaluation.ai_score}</span>
+          <span className="font-medium">{evaluation.ai_score ?? "—"}</span>
         ) : (
           <span className="text-gray-400">Pending</span>
         )}

@@ -163,7 +163,7 @@ export interface SubmissionOut {
 export interface EvaluationOut {
   id: string;
   submission_id: string;
-  ai_score: string;
+  ai_score: string | null;
   final_score: string | null;
   ai_feedback: {
     criteria_scores: Array<{
@@ -188,7 +188,7 @@ export interface EvaluationOut {
 export interface EvaluationListOut {
   id: string;
   submission_id: string;
-  ai_score: string;
+  ai_score: string | null;
   approval_status: ApprovalStatus;
   evaluated_at: string;
   confidence_score: number;

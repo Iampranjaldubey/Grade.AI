@@ -215,7 +215,7 @@ export function EvaluationReviewPage() {
                 <div className="text-center">
                   <p className="text-sm font-medium text-primary mb-2">AI Score</p>
                   <div className="text-5xl font-bold text-primary mb-2">
-                    {evaluation.ai_score}
+                    {evaluation.ai_score ?? "—"}
                   </div>
                   <div className="text-lg text-primary-700">
                     {evaluation.ai_feedback.percentage.toFixed(1)}%
