@@ -1,12 +1,31 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { BookOpen, FileText, Plus, Calendar, Clock, CheckCircle } from "lucide-react";
+import {
+  BookOpen,
+  FileText,
+  Plus,
+  CalendarClock,
+  CheckCircle2,
+  GraduationCap,
+  ClipboardList,
+} from "lucide-react";
 import * as api from "@/lib/api";
 import { submissionsApi } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
-import { StudentLayout } from "@/components/StudentLayout";
+import { AppShell } from "@/components/layout";
 import { JoinCourseModal } from "@/components/JoinCourseModal";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  PageHeader,
+  Skeleton,
+} from "@/components/ui";
+import { StatCard } from "@/components/domain";
 import { formatDate } from "@/lib/utils";
 import type { AssignmentListOut, SubmissionOut } from "@/types";
 
@@ -25,7 +44,7 @@ export function StudentDashboard() {
     queryFn: () => api.getMyCourses(),
   });
 
-  // Aggregate assignments across every enrolled course.
+  // Aggregate assignments across every enrolled course (requests run in parallel).
   const courseIds = courses.map((c) => c.id);
   const { data: assignments = [] } = useQuery({
     queryKey: ["student-assignments", courseIds],
@@ -46,6 +65,7 @@ export function StudentDashboard() {
   });
 
   // Look up this student's submission for each assignment (null when none).
+  // No batch endpoint exists, so these run concurrently and are cached.
   const assignmentIds = assignments.map((a) => a.assignment.id);
   const { data: submissionMap = {} } = useQuery({
     queryKey: ["student-submissions", assignmentIds],
@@ -67,13 +87,16 @@ export function StudentDashboard() {
 
   const now = Date.now();
   const activeAssignments = assignments.filter((a) => a.assignment.is_active);
-
-  // Pending = active assignment this student has not submitted yet.
+  const submittedCount = activeAssignments.filter(
+    (a) => !!submissionMap[a.assignment.id],
+  ).length;
+  const gradedCount = activeAssignments.filter(
+    (a) => submissionMap[a.assignment.id]?.status === "evaluated",
+  ).length;
   const pendingSubmissions = activeAssignments.filter(
     (a) => !submissionMap[a.assignment.id],
   ).length;
 
-  // Upcoming = active, not yet due, soonest first.
   const upcomingAssignments = activeAssignments
     .filter((a) => new Date(a.assignment.due_date).getTime() >= now)
     .sort(
@@ -83,191 +106,150 @@ export function StudentDashboard() {
     )
     .slice(0, 5);
 
-  const enrolledCoursesCount = courses.length;
-
   return (
-    <StudentLayout>
+    <AppShell breadcrumbs={[{ label: "Dashboard" }]}>
       <div className="space-y-8">
-        {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            Welcome back, {user?.name?.split(" ")[0] || "Student"}
-          </h1>
-          <p className="text-gray-600 mt-2">Here's an overview of your academic progress.</p>
-        </div>
+        <PageHeader
+          title={`Welcome back, ${user?.name?.split(" ")[0] || "Student"}`}
+          description="Here's an overview of your coursework and upcoming deadlines."
+          actions={
+            <Button onClick={() => setIsJoinModalOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Join a course
+            </Button>
+          }
+        />
 
-        {/* Stats cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Metrics */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard icon={BookOpen} label="Enrolled courses" value={courses.length} />
           <StatCard
-            icon={<BookOpen className="w-6 h-6" />}
-            label="Enrolled Courses"
-            value={enrolledCoursesCount}
-            color="bg-blue-500"
-          />
-          <StatCard
-            icon={<FileText className="w-6 h-6" />}
-            label="Pending Submissions"
+            icon={ClipboardList}
+            label="To submit"
             value={pendingSubmissions}
-            color="bg-amber-500"
+            tone={pendingSubmissions > 0 ? "warning" : "neutral"}
           />
+          <StatCard icon={CheckCircle2} label="Submitted" value={submittedCount} />
+          <StatCard icon={GraduationCap} label="Graded" value={gradedCount} tone="success" />
         </div>
 
-        {/* My Courses Section */}
-        <div>
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">My Courses</h2>
-            <button
-              onClick={() => setIsJoinModalOpen(true)}
-              className="inline-flex items-center px-4 py-2 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition"
-            >
-              <Plus className="w-5 h-5 mr-2" />
-              Join a Course
-            </button>
+        {/* My Courses */}
+        <section>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-serif text-xl font-semibold text-content">My courses</h2>
+            {courses.length > 3 && (
+              <Link
+                to="/student/courses"
+                className="text-sm font-medium text-brand-fg hover:underline"
+              >
+                View all
+              </Link>
+            )}
           </div>
 
           {isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="bg-white rounded-xl shadow-sm p-6 animate-pulse">
-                  <div className="h-6 bg-gray-200 rounded w-3/4 mb-4"></div>
-                  <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-                </div>
+                <Card key={i} className="p-6">
+                  <Skeleton className="mb-3 h-5 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                </Card>
               ))}
             </div>
           ) : courses.length === 0 ? (
-            <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-              <BookOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No courses yet</h3>
-              <p className="text-gray-600 mb-6">
-                Get started by joining a course using a course code from your professor.
-              </p>
-              <button
-                onClick={() => setIsJoinModalOpen(true)}
-                className="inline-flex items-center px-6 py-3 bg-primary hover:bg-primary-600 text-white font-medium rounded-lg transition"
-              >
-                <Plus className="w-5 h-5 mr-2" />
-                Join a Course
-              </button>
-            </div>
+            <EmptyState
+              icon={BookOpen}
+              title="No courses yet"
+              description="Join a course with the code your professor shared to see assignments and grades."
+              action={
+                <Button onClick={() => setIsJoinModalOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Join a course
+                </Button>
+              }
+            />
           ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {courses.slice(0, 3).map((course) => (
-                  <div
-                    key={course.id}
-                    className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition group"
-                  >
-                    <div className="mb-4">
-                      <h3 className="text-lg font-semibold text-gray-900 group-hover:text-primary transition">
-                        {course.course_name}
-                      </h3>
-                      <p className="text-sm text-gray-600 mt-1">{course.course_code}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center text-sm text-gray-600">
-                        <Calendar className="w-4 h-4 mr-2" />
-                        {course.semester}
-                      </div>
-                      {course.description && (
-                        <p className="text-sm text-gray-600 line-clamp-2 mt-2">
-                          {course.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {courses.length > 3 && (
-                <div className="mt-6 text-center">
-                  <a
-                    href="/student/courses"
-                    className="text-primary hover:text-primary-600 font-medium"
-                  >
-                    View all courses →
-                  </a>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Upcoming Assignments */}
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Upcoming Assignments</h2>
-          {upcomingAssignments.length === 0 ? (
-            <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-              <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                No upcoming assignments
-              </h3>
-              <p className="text-gray-600">
-                You're all caught up. New assignments will appear here as your
-                professors post them.
-              </p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-xl shadow-sm divide-y divide-gray-100">
-              {upcomingAssignments.map(({ assignment, courseCode }) => {
-                const submitted = !!submissionMap[assignment.id];
-                return (
-                  <Link
-                    key={assignment.id}
-                    to={`/student/assignments/${assignment.id}`}
-                    className="flex items-center justify-between p-4 hover:bg-gray-50 transition"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-900 truncate">
-                        {assignment.title}
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+              {courses.slice(0, 3).map((course) => (
+                <Card key={course.id} interactive className="group">
+                  <Link to={`/student/courses/${course.id}`} className="block p-6">
+                    <h3 className="font-serif text-lg font-semibold text-content group-hover:text-brand-fg motion-safe:transition-colors">
+                      {course.course_name}
+                    </h3>
+                    <p className="mt-1 text-sm font-medium text-content-muted">
+                      {course.course_code} · {course.semester}
+                    </p>
+                    {course.description && (
+                      <p className="mt-3 line-clamp-2 text-sm text-content-soft">
+                        {course.description}
                       </p>
-                      <div className="flex items-center gap-3 text-sm text-gray-600 mt-1">
-                        <span>{courseCode}</span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-4 h-4" />
-                          Due {formatDate(assignment.due_date)}
-                        </span>
-                      </div>
-                    </div>
-                    {submitted ? (
-                      <span className="flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800">
-                        <CheckCircle className="w-3 h-3" />
-                        Submitted
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
-                        Not submitted
-                      </span>
                     )}
                   </Link>
-                );
-              })}
+                </Card>
+              ))}
             </div>
           )}
-        </div>
+        </section>
+
+        {/* Upcoming assignments */}
+        <section>
+          <h2 className="mb-4 font-serif text-xl font-semibold text-content">
+            Upcoming assignments
+          </h2>
+          {upcomingAssignments.length === 0 ? (
+            <EmptyState
+              icon={CalendarClock}
+              title="You're all caught up"
+              description="New assignments will appear here as your professors post them."
+            />
+          ) : (
+            <Card>
+              <CardHeader className="sr-only">
+                <CardTitle>Upcoming assignments</CardTitle>
+              </CardHeader>
+              <ul className="divide-y divide-edge-subtle">
+                {upcomingAssignments.map(({ assignment, courseCode }) => {
+                  const submitted = !!submissionMap[assignment.id];
+                  return (
+                    <li key={assignment.id}>
+                      <Link
+                        to={`/student/assignments/${assignment.id}`}
+                        className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-surface-raised motion-safe:transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-content">
+                            {assignment.title}
+                          </p>
+                          <div className="mt-1 flex items-center gap-3 text-sm text-content-muted">
+                            <span>{courseCode}</span>
+                            <span className="flex items-center gap-1">
+                              <CalendarClock className="h-4 w-4" />
+                              Due {formatDate(assignment.due_date)}
+                            </span>
+                          </div>
+                        </div>
+                        {submitted ? (
+                          <Badge tone="success">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Submitted
+                          </Badge>
+                        ) : (
+                          <Badge tone="warning">
+                            <FileText className="h-3.5 w-3.5" />
+                            Not submitted
+                          </Badge>
+                        )}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
+        </section>
       </div>
 
       <JoinCourseModal isOpen={isJoinModalOpen} onClose={() => setIsJoinModalOpen(false)} />
-    </StudentLayout>
-  );
-}
-
-interface StatCardProps {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  color: string;
-}
-
-function StatCard({ icon, label, value, color }: StatCardProps) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-gray-600">{label}</p>
-          <p className="text-3xl font-bold text-gray-900 mt-2">{value}</p>
-        </div>
-        <div className={`${color} p-3 rounded-lg text-white`}>{icon}</div>
-      </div>
-    </div>
+    </AppShell>
   );
 }

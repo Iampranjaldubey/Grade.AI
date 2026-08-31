@@ -1,24 +1,32 @@
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  Calendar,
-  FileText,
-  CheckCircle,
-  Clock,
-  XCircle,
-  Award,
-} from "lucide-react";
+import { CalendarClock, FileText, Award, ChevronRight } from "lucide-react";
 import * as api from "@/lib/api";
 import { submissionsApi } from "@/lib/api";
-import { StudentLayout } from "@/components/StudentLayout";
-import { formatDateTime, cn } from "@/lib/utils";
+import { AppShell } from "@/components/layout";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Skeleton,
+} from "@/components/ui";
+import { StudentAssignmentStatus } from "@/components/domain";
+import { formatDateTime, isPastDue, cn } from "@/lib/utils";
+import type { SubmissionOut } from "@/types";
 
 export function StudentCourseDetailPage() {
   const { courseId } = useParams<{ courseId: string }>();
-  const navigate = useNavigate();
 
-  const { data: course, isLoading: courseLoading } = useQuery({
+  const {
+    data: course,
+    isLoading: courseLoading,
+    isError: courseError,
+    refetch: refetchCourse,
+  } = useQuery({
     queryKey: ["course", courseId],
     queryFn: () => api.getCourse(courseId!),
     enabled: !!courseId,
@@ -30,196 +38,144 @@ export function StudentCourseDetailPage() {
     enabled: !!courseId,
   });
 
-  // Fetch submissions for all assignments
+  // One lookup per assignment (no batch endpoint exists); runs in parallel.
+  const assignmentIds = assignments.map((a) => a.id);
   const { data: submissionsMap = {} } = useQuery({
-    queryKey: ["allSubmissions", courseId],
-    queryFn: async () => {
-      const map: Record<string, import("@/types").SubmissionOut | null> = {};
-      await Promise.all(
+    queryKey: ["allSubmissions", courseId, assignmentIds],
+    queryFn: async (): Promise<Record<string, SubmissionOut | null>> => {
+      const entries = await Promise.all(
         assignments.map(async (assignment) => {
           try {
             const submission = await submissionsApi.getMySubmission(assignment.id);
-            map[assignment.id] = submission;
+            return [assignment.id, submission] as const;
           } catch {
-            // No submission for this assignment
-            map[assignment.id] = null;
+            return [assignment.id, null] as const;
           }
-        })
+        }),
       );
-      return map;
+      return Object.fromEntries(entries);
     },
     enabled: assignments.length > 0,
   });
 
-  const getStatusBadge = (assignmentId: string, dueDate: string) => {
-    const submission = submissionsMap[assignmentId];
-    const isPast = new Date(dueDate) < new Date();
+  const breadcrumbs = [
+    { label: "My Courses", to: "/student/courses" },
+    { label: course?.course_code ?? "Course" },
+  ];
 
-    if (!submission) {
-      return {
-        icon: isPast ? XCircle : Clock,
-        color: isPast ? "bg-red-100 text-red-800" : "bg-gray-100 text-gray-800",
-        label: isPast ? "Missing" : "Not Submitted",
-      };
-    }
-
-    if (submission.status === "evaluated") {
-      return {
-        icon: CheckCircle,
-        color: "bg-green-100 text-green-800",
-        label: "Graded",
-      };
-    }
-
-    if (submission.status === "evaluating") {
-      return {
-        icon: Clock,
-        color: "bg-yellow-100 text-yellow-800",
-        label: "Evaluating",
-      };
-    }
-
-    return {
-      icon: CheckCircle,
-      color: "bg-blue-100 text-blue-800",
-      label: "Submitted",
-    };
-  };
-
-  if (courseLoading || assignmentsLoading) {
+  if (courseLoading) {
     return (
-      <StudentLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="h-32 bg-gray-200 rounded-xl"></div>
-          <div className="space-y-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-24 bg-gray-200 rounded-xl"></div>
-            ))}
-          </div>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <div className="space-y-6">
+          <Skeleton className="h-9 w-1/3" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-64 w-full" />
         </div>
-      </StudentLayout>
+      </AppShell>
     );
   }
 
-  if (!course) {
+  if (courseError || !course) {
     return (
-      <StudentLayout>
-        <div className="text-center py-12">
-          <h1 className="text-2xl font-bold text-gray-900">Course not found</h1>
-        </div>
-      </StudentLayout>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <ErrorState
+          title="Course not found"
+          description="This course may no longer be available, or you're not enrolled in it."
+          onRetry={() => refetchCourse()}
+        />
+      </AppShell>
     );
   }
 
   return (
-    <StudentLayout>
+    <AppShell breadcrumbs={breadcrumbs}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate("/student/courses")}
-            className="p-2 hover:bg-gray-100 rounded-lg transition"
-          >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{course.course_name}</h1>
-            <p className="text-sm text-gray-600 mt-1">{course.course_code}</p>
-          </div>
-        </div>
+        <PageHeader
+          title={course.course_name}
+          description={`${course.course_code} · ${course.semester}`}
+        />
 
-        {/* Course Info */}
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Semester</p>
-              <p className="font-medium text-gray-900">{course.semester}</p>
-            </div>
-            {course.description && (
-              <div className="md:col-span-2">
-                <p className="text-sm text-gray-600 mb-1">Description</p>
-                <p className="text-gray-900">{course.description}</p>
-              </div>
-            )}
-          </div>
-        </div>
+        {course.description && (
+          <Card>
+            <CardContent>
+              <p className="text-content-soft">{course.description}</p>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Assignments */}
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Assignments</h2>
+        <Card>
+          <CardHeader>
+            <CardTitle>Assignments</CardTitle>
+          </CardHeader>
 
-          {assignments.length === 0 ? (
-            <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-              <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-gray-600 font-medium">No assignments yet</p>
-              <p className="text-sm text-gray-500 mt-1">
-                Your professor hasn't created any assignments
-              </p>
-            </div>
+          {assignmentsLoading ? (
+            <CardContent className="space-y-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </CardContent>
+          ) : assignments.length === 0 ? (
+            <CardContent>
+              <EmptyState
+                icon={FileText}
+                title="No assignments yet"
+                description="Your professor hasn't posted any assignments for this course."
+              />
+            </CardContent>
           ) : (
-            <div className="space-y-4">
+            <ul className="divide-y divide-edge-subtle">
               {assignments.map((assignment) => {
-                const dueDate = new Date(assignment.due_date);
-                const isPast = dueDate < new Date();
-                const status = getStatusBadge(assignment.id, assignment.due_date);
-
+                const overdue = isPastDue(assignment.due_date);
                 return (
-                  <button
-                    key={assignment.id}
-                    onClick={() => navigate(`/student/assignments/${assignment.id}`)}
-                    className="w-full text-left bg-white border border-gray-200 rounded-lg p-5 hover:border-primary hover:shadow-md transition"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-lg font-semibold text-gray-900">
+                  <li key={assignment.id}>
+                    <Link
+                      to={`/student/assignments/${assignment.id}`}
+                      className="flex items-center gap-4 px-5 py-4 hover:bg-surface-raised motion-safe:transition-colors sm:px-6"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <h3 className="font-medium text-content">
                             {assignment.title}
                           </h3>
-                          <span
-                            className={cn(
-                              "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium",
-                              status.color
-                            )}
-                          >
-                            <status.icon className="w-3.5 h-3.5" />
-                            {status.label}
-                          </span>
+                          <StudentAssignmentStatus
+                            submission={submissionsMap[assignment.id]}
+                            dueDate={assignment.due_date}
+                          />
                         </div>
 
                         {assignment.description && (
-                          <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                          <p className="mt-1.5 line-clamp-2 text-sm text-content-soft">
                             {assignment.description}
                           </p>
                         )}
 
-                        <div className="flex items-center gap-6 text-sm">
-                          <div className="flex items-center gap-2 text-gray-600">
-                            <Calendar className="w-4 h-4" />
-                            <span className={cn(isPast && "text-red-600")}>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-content-muted">
+                          <span className="flex items-center gap-1.5">
+                            <CalendarClock className="h-4 w-4" aria-hidden="true" />
+                            <span
+                              className={cn(overdue && "font-medium text-danger-fg")}
+                            >
                               Due {formatDateTime(assignment.due_date)}
                             </span>
-                          </div>
-                          <div className="flex items-center gap-2 text-gray-600">
-                            <Award className="w-4 h-4" />
-                            <span>{assignment.max_score} points</span>
-                          </div>
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <Award className="h-4 w-4" aria-hidden="true" />
+                            {assignment.max_score} points
+                          </span>
                         </div>
                       </div>
 
-                      <div className="ml-4">
-                        <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-                          <FileText className="w-5 h-5 text-primary" />
-                        </div>
-                      </div>
-                    </div>
-                  </button>
+                      <ChevronRight
+                        className="h-5 w-5 flex-shrink-0 text-content-muted"
+                        aria-hidden="true"
+                      />
+                    </Link>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           )}
-        </div>
+        </Card>
       </div>
-    </StudentLayout>
+    </AppShell>
   );
 }

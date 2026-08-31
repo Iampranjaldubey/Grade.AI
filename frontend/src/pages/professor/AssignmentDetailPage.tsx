@@ -1,50 +1,62 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+import { useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Calendar,
   Award,
-  Clock,
-  Plus,
-  Trash2,
-  Save,
-  AlertCircle,
-  CheckCircle,
+  CalendarClock,
+  ClipboardList,
   FileText,
-  Loader2,
-  Eye,
-  Play,
-  Check,
   FolderOpen,
+  Info,
 } from "lucide-react";
-import toast from "react-hot-toast";
 import * as api from "@/lib/api";
-import { submissionsApi, evaluationsApi, uploadsApi } from "@/lib/api";
-import { ProfessorLayout } from "@/components/ProfessorLayout";
-import { DocumentUploadZone } from "@/components/DocumentUploadZone";
-import { formatDateTime, cn } from "@/lib/utils";
-import type { RubricCreate, SubmissionStatus, DocumentOut, ParseStatus } from "@/types";
+import { submissionsApi, uploadsApi } from "@/lib/api";
+import { AppShell } from "@/components/layout";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  ErrorState,
+  PageHeader,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui";
+import {
+  DocumentSection,
+  RubricBuilder,
+  SubmissionsTable,
+  pollWhileEvaluating,
+  pollWhileParsing,
+} from "@/components/domain";
+import { formatDateTime, isPastDue, cn } from "@/lib/utils";
+import type { AssignmentOut, DocumentOut } from "@/types";
 
-const rubricSchema = z.object({
-  criteria_name: z.string().min(1, "Criteria name is required"),
-  description: z.string().optional(),
-  max_points: z.coerce.number().min(0.01, "Max points must be positive"),
-  weight: z.coerce.number().min(0, "Weight must be positive").max(100, "Weight cannot exceed 100"),
-  evaluation_hints: z.string().optional(),
-});
-
-type RubricFormData = z.infer<typeof rubricSchema>;
-
+/**
+ * Assignment workspace for professors: instructions, the grading rubric,
+ * submissions, and reference material.
+ *
+ * Previously a ~980-line monolith that mixed all four concerns plus its own
+ * document uploader, badges, and tables. Those are now shared components and
+ * this file is only composition + data fetching.
+ */
 export function AssignmentDetailPage() {
-  const { assignmentId, courseId } = useParams<{ courseId: string; assignmentId: string }>();
+  const { assignmentId, courseId } = useParams<{
+    courseId: string;
+    assignmentId: string;
+  }>();
   const queryClient = useQueryClient();
-  const [isAddingCriterion, setIsAddingCriterion] = useState(false);
-  const [criteria, setCriteria] = useState<RubricCreate[]>([]);
 
-  const { data: assignment, isLoading: assignmentLoading } = useQuery({
+  const {
+    data: assignment,
+    isLoading: assignmentLoading,
+    isError: assignmentError,
+    refetch: refetchAssignment,
+  } = useQuery({
     queryKey: ["assignment", assignmentId],
     queryFn: () => api.getAssignment(assignmentId!),
     enabled: !!assignmentId,
@@ -60,919 +72,238 @@ export function AssignmentDetailPage() {
     queryKey: ["submissions", assignmentId],
     queryFn: () => submissionsApi.getAllSubmissions(assignmentId!),
     enabled: !!assignmentId,
+    // Keep refreshing while the AI is still grading anything.
+    refetchInterval: (query) => pollWhileEvaluating(query.state.data),
   });
 
-  const { data: documents = [], isLoading: documentsLoading, refetch: refetchDocuments } = useQuery({
+  const { data: documents = [], isLoading: documentsLoading } = useQuery({
     queryKey: ["assignment-documents", assignmentId],
-    queryFn: async () => {
-      // Get course documents and filter by this assignment
+    queryFn: async (): Promise<DocumentOut[]> => {
       const allDocs = await uploadsApi.getCourseDocuments(courseId!);
-      return allDocs.filter(doc => doc.assignment_id === assignmentId);
+      return allDocs.filter((doc) => doc.assignment_id === assignmentId);
     },
     enabled: !!assignmentId && !!courseId,
+    refetchInterval: (query) => pollWhileParsing(query.state.data),
   });
 
-  const saveRubricsMutation = useMutation({
-    mutationFn: (data: { criteria: RubricCreate[] }) =>
-      api.createRubrics(assignmentId!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["rubrics", assignmentId] });
-      toast.success("Rubrics saved successfully!");
-      setCriteria([]);
-      setIsAddingCriterion(false);
-    },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to save rubrics";
-      toast.error(message);
-    },
-  });
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<RubricFormData>({
-    resolver: zodResolver(rubricSchema),
-  });
-
-  const handleAddCriterion = (data: RubricFormData) => {
-    setCriteria([
-      ...criteria,
-      {
-        criteria_name: data.criteria_name,
-        description: data.description,
-        max_points: data.max_points.toString(),
-        weight: data.weight.toString(),
-        evaluation_hints: data.evaluation_hints,
-      },
-    ]);
-    reset();
-    setIsAddingCriterion(false);
-  };
-
-  const handleRemoveCriterion = (index: number) => {
-    setCriteria(criteria.filter((_, i) => i !== index));
-  };
-
-  const handleSaveRubrics = () => {
-    if (criteria.length === 0) {
-      toast.error("Add at least one criterion before saving");
-      return;
-    }
-
-    const totalWeight = criteria.reduce(
-      (sum, c) => sum + parseFloat(c.weight),
-      0
-    );
-
-    if (Math.abs(totalWeight - 100) > 0.01) {
-      toast.error(`Total weight must equal 100% (currently ${totalWeight.toFixed(2)}%)`);
-      return;
-    }
-
-    saveRubricsMutation.mutate({ criteria });
-  };
+  const breadcrumbs = [
+    { label: "Courses", to: "/professor/courses" },
+    { label: "Course", to: `/professor/courses/${courseId}` },
+    { label: assignment?.title ?? "Assignment" },
+  ];
 
   if (assignmentLoading) {
     return (
-      <ProfessorLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="h-64 bg-gray-200 rounded"></div>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <div className="space-y-6">
+          <Skeleton className="h-9 w-1/2" />
+          <Skeleton className="h-10 w-full max-w-md" />
+          <Skeleton className="h-64 w-full" />
         </div>
-      </ProfessorLayout>
+      </AppShell>
     );
   }
 
-  if (!assignment) {
+  if (assignmentError || !assignment) {
     return (
-      <ProfessorLayout>
-        <div className="text-center py-12">
-          <h1 className="text-2xl font-bold text-gray-900">Assignment not found</h1>
-        </div>
-      </ProfessorLayout>
+      <AppShell breadcrumbs={breadcrumbs}>
+        <ErrorState
+          title="Assignment not found"
+          description="This assignment may have been removed, or you don't have access to it."
+          onRetry={() => refetchAssignment()}
+        />
+      </AppShell>
     );
   }
 
-  const dueDate = new Date(assignment.due_date);
-  const isPast = dueDate < new Date();
-  const totalWeight = criteria.reduce((sum, c) => sum + parseFloat(c.weight), 0);
-  const existingWeight = rubrics.reduce((sum, r) => sum + parseFloat(r.weight), 0);
-  const displayWeight = criteria.length > 0 ? totalWeight : existingWeight;
+  const rubricDocuments = documents.filter((d) => d.doc_type === "rubric");
+  const sampleDocuments = documents.filter((d) => d.doc_type === "sample_solution");
+  const invalidateDocuments = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["assignment-documents", assignmentId],
+    });
 
   return (
-    <ProfessorLayout>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Assignment Info */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">{assignment.title}</h1>
+    <AppShell breadcrumbs={breadcrumbs}>
+      <div className="space-y-6">
+        <PageHeader
+          title={assignment.title}
+          description={`${assignment.max_score} points · due ${formatDateTime(
+            assignment.due_date,
+          )}`}
+          actions={<StatusBadge kind="gradingMode" value={assignment.grading_mode} />}
+        />
 
-            {assignment.description && (
-              <p className="text-gray-600 mb-6">{assignment.description}</p>
-            )}
+        <Tabs defaultValue="rubric">
+          <TabsList>
+            <TabsTrigger value="rubric">
+              <ClipboardList className="h-4 w-4" aria-hidden="true" />
+              Rubric
+              <Badge tone="neutral">{rubrics.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="submissions">
+              <FileText className="h-4 w-4" aria-hidden="true" />
+              Submissions
+              <Badge tone="neutral">{submissions.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="instructions">
+              <Info className="h-4 w-4" aria-hidden="true" />
+              Instructions
+            </TabsTrigger>
+            <TabsTrigger value="materials">
+              <FolderOpen className="h-4 w-4" aria-hidden="true" />
+              Materials
+            </TabsTrigger>
+          </TabsList>
 
-            <div className="space-y-4">
-              <div className="flex items-center text-sm">
-                <Calendar className="w-5 h-5 text-gray-400 mr-3" />
-                <div>
-                  <p className="text-gray-600">Due Date</p>
-                  <p className={cn("font-medium", isPast ? "text-red-600" : "text-gray-900")}>
-                    {formatDateTime(assignment.due_date)}
-                  </p>
-                </div>
-              </div>
+          <TabsContent value="rubric">
+            <RubricBuilder
+              assignmentId={assignmentId!}
+              rubrics={rubrics}
+              isLoading={rubricsLoading}
+            />
+          </TabsContent>
 
-              <div className="flex items-center text-sm">
-                <Award className="w-5 h-5 text-gray-400 mr-3" />
-                <div>
-                  <p className="text-gray-600">Max Score</p>
-                  <p className="font-medium text-gray-900">{assignment.max_score} points</p>
-                </div>
-              </div>
-
-              <div className="flex items-center text-sm">
-                <Clock className="w-5 h-5 text-gray-400 mr-3" />
-                <div>
-                  <p className="text-gray-600">Status</p>
-                  <p className={cn("font-medium", isPast ? "text-red-600" : "text-green-600")}>
-                    {isPast ? "Closed" : "Open"}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <GradingModeBadge mode={assignment.grading_mode} />
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column - Rubric Builder & Submissions */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Rubric Builder */}
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">Grading Rubric</h2>
-                <p className="text-sm text-gray-600 mt-1">
-                  Define criteria for evaluating submissions
+          <TabsContent value="submissions">
+            {rubrics.length === 0 ? (
+              <div
+                className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning-subtle px-4 py-3"
+                role="note"
+              >
+                <Info
+                  className="mt-0.5 h-5 w-5 flex-shrink-0 text-warning"
+                  aria-hidden="true"
+                />
+                <p className="text-sm text-content-soft">
+                  Add a rubric before grading — GradeAI needs criteria to score
+                  against.
                 </p>
               </div>
-              <WeightIndicator weight={displayWeight} />
-            </div>
-
-            {/* Existing Rubrics */}
-            {rubricsLoading ? (
-              <div className="space-y-4">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-24 bg-gray-200 rounded-lg animate-pulse"></div>
-                ))}
-              </div>
-            ) : rubrics.length > 0 && criteria.length === 0 ? (
-              <div className="space-y-4 mb-6">
-                {rubrics.map((rubric) => (
-                  <div
-                    key={rubric.id}
-                    className="border border-gray-200 rounded-lg p-4 bg-gray-50"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-semibold text-gray-900">{rubric.criteria_name}</h3>
-                      <span className="text-sm font-medium text-primary">
-                        {rubric.weight}%
-                      </span>
-                    </div>
-                    {rubric.description && (
-                      <p className="text-sm text-gray-600 mb-2">{rubric.description}</p>
-                    )}
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                      <span>Max Points: {rubric.max_points}</span>
-                    </div>
-                    {rubric.evaluation_hints && (
-                      <p className="text-sm text-gray-500 mt-2 italic">
-                        Hints: {rubric.evaluation_hints}
-                      </p>
-                    )}
-                  </div>
-                ))}
-                <button
-                  onClick={() => {
-                    const existingCriteria = rubrics.map((r) => ({
-                      criteria_name: r.criteria_name,
-                      description: r.description || undefined,
-                      max_points: r.max_points,
-                      weight: r.weight,
-                      evaluation_hints: r.evaluation_hints || undefined,
-                    }));
-                    setCriteria(existingCriteria);
-                  }}
-                  className="w-full py-2 text-sm text-primary hover:bg-primary-50 border border-primary border-dashed rounded-lg transition"
-                >
-                  Edit Rubrics
-                </button>
-              </div>
-            ) : null}
-
-            {/* New Criteria Being Added */}
-            {criteria.length > 0 && (
-              <div className="space-y-4 mb-6">
-                {criteria.map((criterion, index) => (
-                  <div
-                    key={index}
-                    className="border border-primary-200 rounded-lg p-4 bg-primary-50"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-semibold text-gray-900">{criterion.criteria_name}</h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-primary">
-                          {criterion.weight}%
-                        </span>
-                        <button
-                          onClick={() => handleRemoveCriterion(index)}
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    {criterion.description && (
-                      <p className="text-sm text-gray-600 mb-2">{criterion.description}</p>
-                    )}
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                      <span>Max Points: {criterion.max_points}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Add Criterion Form */}
-            {isAddingCriterion ? (
-              <form onSubmit={handleSubmit(handleAddCriterion)} className="space-y-4 mb-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Criteria Name *
-                    </label>
-                    <input
-                      {...register("criteria_name")}
-                      className={cn(
-                        "block w-full px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent",
-                        errors.criteria_name ? "border-red-300" : "border-gray-300"
-                      )}
-                      placeholder="Code Quality"
-                    />
-                    {errors.criteria_name && (
-                      <p className="mt-1 text-xs text-red-600">{errors.criteria_name.message}</p>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Max Points *
-                      </label>
-                      <input
-                        {...register("max_points")}
-                        type="number"
-                        step="0.01"
-                        className={cn(
-                          "block w-full px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent",
-                          errors.max_points ? "border-red-300" : "border-gray-300"
-                        )}
-                        placeholder="10"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Weight % *
-                      </label>
-                      <input
-                        {...register("weight")}
-                        type="number"
-                        step="0.01"
-                        className={cn(
-                          "block w-full px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-primary focus:border-transparent",
-                          errors.weight ? "border-red-300" : "border-gray-300"
-                        )}
-                        placeholder="25"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Description
-                  </label>
-                  <textarea
-                    {...register("description")}
-                    rows={2}
-                    className="block w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent resize-none"
-                    placeholder="Describe what this criterion evaluates..."
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Evaluation Hints
-                  </label>
-                  <input
-                    {...register("evaluation_hints")}
-                    className="block w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent"
-                    placeholder="Guidelines for AI or manual grading..."
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-primary hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition"
-                  >
-                    Add Criterion
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddingCriterion(false);
-                      reset();
-                    }}
-                    className="px-4 py-2 text-gray-700 text-sm font-medium hover:bg-gray-100 rounded-lg transition"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
             ) : (
-              <button
-                onClick={() => setIsAddingCriterion(true)}
-                className="w-full py-3 text-primary hover:bg-primary-50 border border-primary border-dashed rounded-lg transition flex items-center justify-center gap-2 font-medium"
-              >
-                <Plus className="w-5 h-5" />
-                Add Criterion
-              </button>
+              <SubmissionsTable
+                assignmentId={assignmentId!}
+                submissions={submissions}
+                isLoading={submissionsLoading}
+              />
             )}
+          </TabsContent>
 
-            {/* Save Button */}
-            {criteria.length > 0 && (
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <button
-                  onClick={handleSaveRubrics}
-                  disabled={saveRubricsMutation.isPending}
-                  className="w-full bg-primary hover:bg-primary-600 text-white font-medium py-3 px-4 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {saveRubricsMutation.isPending ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-5 h-5" />
-                      Save Rubric
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
+          <TabsContent value="instructions">
+            <InstructionsTab assignment={assignment} />
+          </TabsContent>
 
-          {/* Submissions Section */}
-          {rubrics.length > 0 && (
-            <SubmissionsSection
-              assignmentId={assignmentId!}
-              submissions={submissions}
-              isLoading={submissionsLoading}
+          <TabsContent value="materials">
+            <div className="space-y-6">
+              <DocumentSection
+                title="Rubric documents"
+                description="An uploaded rubric the AI can reference while grading."
+                docType="rubric"
+                documents={rubricDocuments}
+                courseId={assignment.course_id}
+                assignmentId={assignmentId}
+                isLoading={documentsLoading}
+                onChanged={invalidateDocuments}
+              />
+              <DocumentSection
+                title="Sample solutions"
+                description="Model answers used as grading reference material."
+                docType="sample_solution"
+                documents={sampleDocuments}
+                courseId={assignment.course_id}
+                assignmentId={assignmentId}
+                isLoading={documentsLoading}
+                onChanged={invalidateDocuments}
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </AppShell>
+  );
+}
+
+function InstructionsTab({ assignment }: { assignment: AssignmentOut }) {
+  const overdue = isPastDue(assignment.due_date);
+
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle>Instructions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {assignment.description ? (
+            <p className="whitespace-pre-wrap leading-relaxed text-content-soft">
+              {assignment.description}
+            </p>
+          ) : (
+            <p className="text-sm text-content-muted">
+              No instructions were provided for this assignment.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="h-fit">
+        <CardHeader>
+          <CardTitle>Details</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="space-y-4">
+            <Detail
+              icon={CalendarClock}
+              label="Due date"
+              value={formatDateTime(assignment.due_date)}
+              valueClassName={cn(overdue && "text-danger-fg font-medium")}
             />
-          )}
-
-          {/* Assignment Documents Section */}
-          {rubrics.length > 0 && (
-            <AssignmentDocumentsSection
-              courseId={assignment.course_id}
-              assignmentId={assignmentId!}
-              documents={documents}
-              isLoading={documentsLoading}
-              onDocumentUploaded={() => refetchDocuments()}
+            <Detail
+              icon={Award}
+              label="Total points"
+              value={`${assignment.max_score} points`}
             />
-          )}
-        </div>
-      </div>
-    </ProfessorLayout>
-  );
-}
-
-interface SubmissionsSectionProps {
-  assignmentId: string;
-  submissions: Array<import("@/types").SubmissionOut & { student_name: string; student_email: string }>;
-  isLoading: boolean;
-}
-
-function SubmissionsSection({ assignmentId, submissions, isLoading }: SubmissionsSectionProps) {
-  const queryClient = useQueryClient();
-  const [evaluatingIds, setEvaluatingIds] = useState<Set<string>>(new Set());
-
-  const triggerEvaluationMutation = useMutation({
-    mutationFn: (submissionId: string) => evaluationsApi.trigger(submissionId),
-    onSuccess: (_, submissionId) => {
-      toast.success("Evaluation triggered successfully!");
-      setEvaluatingIds((prev) => new Set(prev).add(submissionId));
-      // Refresh after 3 seconds
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["submissions", assignmentId] });
-        setEvaluatingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(submissionId);
-          return next;
-        });
-      }, 3000);
-    },
-    onError: (error: { response?: { data?: { detail?: string } } }) => {
-      const message = error.response?.data?.detail || "Failed to trigger evaluation";
-      toast.error(message);
-    },
-  });
-
-  const handleEvaluateAll = () => {
-    const submittedSubmissions = submissions.filter(
-      (s) => s.status === "submitted"
-    );
-    if (submittedSubmissions.length === 0) {
-      toast.error("No submitted submissions to evaluate");
-      return;
-    }
-    submittedSubmissions.forEach((submission) => {
-      triggerEvaluationMutation.mutate(submission.id);
-    });
-  };
-
-  const getStatusColor = (status: SubmissionStatus) => {
-    const colors = {
-      submitted: "bg-blue-100 text-blue-800",
-      evaluating: "bg-yellow-100 text-yellow-800",
-      evaluated: "bg-green-100 text-green-800",
-      late: "bg-red-100 text-red-800",
-    };
-    return colors[status] || "bg-gray-100 text-gray-800";
-  };
-
-  if (isLoading) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-gray-200 rounded w-1/4"></div>
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 bg-gray-200 rounded"></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Submissions</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
-          </p>
-        </div>
-        {submissions.some((s) => s.status === "submitted") && (
-          <button
-            onClick={handleEvaluateAll}
-            disabled={triggerEvaluationMutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Play className="w-4 h-4" />
-            Evaluate All
-          </button>
-        )}
-      </div>
-
-      {submissions.length === 0 ? (
-        <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-          <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-          <p className="text-gray-600 font-medium">No submissions yet</p>
-          <p className="text-sm text-gray-500 mt-1">
-            Students haven't submitted their work for this assignment
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Student
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Submitted At
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  AI Score
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {submissions.map((submission) => (
-                <SubmissionRow
-                  key={submission.id}
-                  submission={submission}
-                  isEvaluating={evaluatingIds.has(submission.id)}
-                  onEvaluate={() => triggerEvaluationMutation.mutate(submission.id)}
-                  getStatusColor={getStatusColor}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            <div>
+              <dt className="mb-1.5 text-[13px] font-medium text-content-muted">
+                Grading mode
+              </dt>
+              <dd>
+                <StatusBadge kind="gradingMode" value={assignment.grading_mode} />
+              </dd>
+            </div>
+            <div>
+              <dt className="mb-1.5 text-[13px] font-medium text-content-muted">
+                Status
+              </dt>
+              <dd>
+                <Badge tone={overdue ? "danger" : "success"}>
+                  {overdue ? "Closed" : "Open"}
+                </Badge>
+              </dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-interface SubmissionRowProps {
-  submission: import("@/types").SubmissionOut & { student_name: string; student_email: string };
-  isEvaluating: boolean;
-  onEvaluate: () => void;
-  getStatusColor: (status: SubmissionStatus) => string;
-}
-
-function SubmissionRow({ submission, isEvaluating, onEvaluate, getStatusColor }: SubmissionRowProps) {
-  const navigate = useNavigate();
-  
-  // Query to get evaluation if status is evaluated
-  const { data: evaluation } = useQuery({
-    queryKey: ["evaluation", submission.id],
-    queryFn: () => evaluationsApi.getMyGrade(submission.id),
-    enabled: submission.status === "evaluated",
-  });
-
-  return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-4 py-4 whitespace-nowrap">
-        <div>
-          <div className="text-sm font-medium text-gray-900">
-            {submission.student_name}
-          </div>
-          <div className="text-sm text-gray-500">{submission.student_email}</div>
-        </div>
-      </td>
-      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
-        {formatDateTime(submission.submitted_at)}
-      </td>
-      <td className="px-4 py-4 whitespace-nowrap">
-        <span
-          className={cn(
-            "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
-            getStatusColor(submission.status)
-          )}
-        >
-          {submission.status}
-        </span>
-      </td>
-      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-        {evaluation ? (
-          <span className="font-medium">{evaluation.ai_score ?? "—"}</span>
-        ) : (
-          <span className="text-gray-400">Pending</span>
-        )}
-      </td>
-      <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
-        <div className="flex items-center justify-end gap-2">
-          {submission.status === "submitted" && (
-            <button
-              onClick={onEvaluate}
-              disabled={isEvaluating}
-              className="inline-flex items-center gap-1 px-3 py-1 bg-primary hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isEvaluating ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Evaluating
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  Evaluate
-                </>
-              )}
-            </button>
-          )}
-          {evaluation && (
-            <button
-              onClick={() => navigate(`/professor/evaluations/${evaluation.id}`)}
-              className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition"
-            >
-              <Eye className="w-4 h-4" />
-              Review
-            </button>
-          )}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function GradingModeBadge({ mode }: { mode: string }) {
-  const colors = {
-    auto: "bg-green-100 text-green-800",
-    manual: "bg-blue-100 text-blue-800",
-    hybrid: "bg-purple-100 text-purple-800",
-  };
-
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center px-3 py-1 text-sm font-medium rounded-full",
-        colors[mode as keyof typeof colors] || "bg-gray-100 text-gray-800"
-      )}
-    >
-      {mode.charAt(0).toUpperCase() + mode.slice(1)} Grading
-    </span>
-  );
-}
-
-function WeightIndicator({ weight }: { weight: number }) {
-  const isValid = Math.abs(weight - 100) < 0.01;
-  const roundedWeight = Math.round(weight * 100) / 100;
-
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 px-4 py-2 rounded-lg font-semibold",
-        isValid ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
-      )}
-    >
-      {isValid ? (
-        <CheckCircle className="w-5 h-5" />
-      ) : (
-        <AlertCircle className="w-5 h-5" />
-      )}
-      <span>
-        {roundedWeight}/100%
-      </span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Assignment Documents Section
-// ---------------------------------------------------------------------------
-
-interface AssignmentDocumentsSectionProps {
-  courseId: string;
-  assignmentId: string;
-  documents: DocumentOut[];
-  isLoading: boolean;
-  onDocumentUploaded: () => void;
-}
-
-function AssignmentDocumentsSection({
-  courseId,
-  assignmentId,
-  documents,
-  isLoading,
-  onDocumentUploaded,
-}: AssignmentDocumentsSectionProps) {
-  const queryClient = useQueryClient();
-  const [uploadingSections, setUploadingSections] = useState<Record<string, boolean>>({});
-
-  // Auto-refresh when any document is processing
-  useEffect(() => {
-    const hasProcessing = documents.some(
-      (doc) => doc.parse_status === "pending" || doc.parse_status === "processing"
-    );
-
-    if (hasProcessing) {
-      const interval = setInterval(() => {
-        queryClient.invalidateQueries({ queryKey: ["assignment-documents", assignmentId] });
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [documents, assignmentId, queryClient]);
-
-  const deleteMutation = useMutation({
-    mutationFn: (documentId: string) => uploadsApi.deleteDocument(documentId),
-    onSuccess: () => {
-      toast.success("Document deleted");
-      queryClient.invalidateQueries({ queryKey: ["assignment-documents", assignmentId] });
-    },
-    onError: () => {
-      toast.error("Failed to delete document");
-    },
-  });
-
-  const handleDelete = (documentId: string, fileName: string) => {
-    if (confirm(`Delete "${fileName}"?`)) {
-      deleteMutation.mutate(documentId);
-    }
-  };
-
-  const rubricDocuments = documents.filter((doc) => doc.doc_type === "rubric");
-  const sampleDocuments = documents.filter((doc) => doc.doc_type === "sample_solution");
-
-  if (isLoading) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-gray-200 rounded w-1/4"></div>
-          <div className="h-32 bg-gray-200 rounded"></div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <FolderOpen className="w-6 h-6 text-primary" />
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Assignment Documents</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            Upload rubric documents and sample solutions for this assignment
-          </p>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        {/* Rubric Documents */}
-        <AssignmentDocumentSection
-          title="Rubric Documents"
-          docType="rubric"
-          documents={rubricDocuments}
-          courseId={courseId}
-          assignmentId={assignmentId}
-          isUploading={uploadingSections["rubric"]}
-          onUploadStart={() => setUploadingSections((prev) => ({ ...prev, rubric: true }))}
-          onUploadEnd={() => {
-            setUploadingSections((prev) => ({ ...prev, rubric: false }));
-            onDocumentUploaded();
-          }}
-          onDelete={handleDelete}
-        />
-
-        {/* Sample Solutions */}
-        <AssignmentDocumentSection
-          title="Sample Solutions"
-          docType="sample_solution"
-          documents={sampleDocuments}
-          courseId={courseId}
-          assignmentId={assignmentId}
-          isUploading={uploadingSections["sample_solution"]}
-          onUploadStart={() =>
-            setUploadingSections((prev) => ({ ...prev, sample_solution: true }))
-          }
-          onUploadEnd={() => {
-            setUploadingSections((prev) => ({ ...prev, sample_solution: false }));
-            onDocumentUploaded();
-          }}
-          onDelete={handleDelete}
-        />
-      </div>
-    </div>
-  );
-}
-
-function AssignmentDocumentSection({
-  title,
-  docType,
-  documents,
-  courseId,
-  assignmentId,
-  isUploading: _isUploading,
-  onUploadStart,
-  onUploadEnd,
-  onDelete,
+function Detail({
+  icon: Icon,
+  label,
+  value,
+  valueClassName,
 }: {
-  title: string;
-  docType: import("@/types").DocumentType;
-  documents: DocumentOut[];
-  courseId: string;
-  assignmentId: string;
-  isUploading: boolean;
-  onUploadStart: () => void;
-  onUploadEnd: () => void;
-  onDelete: (documentId: string, fileName: string) => void;
+  icon: typeof Award;
+  label: string;
+  value: string;
+  valueClassName?: string;
 }) {
-  const [showUpload, setShowUpload] = useState(false);
-
-  const handleUploadSuccess = (_documentId: string, _fileKey: string, _fileSizeBytes: number) => {
-    setShowUpload(false);
-    onUploadEnd();
-  };
-
   return (
-    <div className="border border-gray-200 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-        <button
-          onClick={() => {
-            setShowUpload(!showUpload);
-            if (!showUpload) onUploadStart();
-          }}
-          className="text-sm font-medium text-primary hover:text-primary-600 transition"
-        >
-          {showUpload ? "Cancel" : "+ Upload"}
-        </button>
-      </div>
-
-      {showUpload && (
-        <div className="mb-4">
-          <DocumentUploadZone
-            docType={docType}
-            courseId={courseId}
-            assignmentId={assignmentId}
-            onSuccess={handleUploadSuccess}
-            onError={() => onUploadEnd()}
-          />
-        </div>
-      )}
-
-      {documents.length === 0 ? (
-        <p className="text-gray-500 text-sm">No documents uploaded yet</p>
-      ) : (
-        <div className="space-y-2">
-          {documents.map((doc) => (
-            <AssignmentDocumentItem key={doc.id} document={doc} onDelete={onDelete} />
-          ))}
-        </div>
-      )}
+    <div>
+      <dt className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-content-muted">
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        {label}
+      </dt>
+      <dd className={cn("text-content", valueClassName)}>{value}</dd>
     </div>
-  );
-}
-
-function AssignmentDocumentItem({
-  document,
-  onDelete,
-}: {
-  document: DocumentOut;
-  onDelete: (documentId: string, fileName: string) => void;
-}) {
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  return (
-    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
-      <div className="flex items-center gap-3 flex-1">
-        <FileText className="w-5 h-5 text-gray-400" />
-        <div className="flex-1">
-          <p className="text-sm font-medium text-gray-900">{document.file_name}</p>
-          <p className="text-xs text-gray-500">{formatFileSize(document.file_size_bytes)}</p>
-        </div>
-        <AssignmentParseStatusBadge status={document.parse_status} />
-      </div>
-      <button
-        onClick={() => onDelete(document.id, document.file_name)}
-        className="p-2 text-gray-400 hover:text-red-600 transition"
-      >
-        <Trash2 className="w-4 h-4" />
-      </button>
-    </div>
-  );
-}
-
-function AssignmentParseStatusBadge({ status }: { status: ParseStatus }) {
-  const config: Record<ParseStatus, { label: string; className: string; icon?: React.ReactNode }> = {
-    pending: {
-      label: "Pending",
-      className: "bg-yellow-100 text-yellow-800",
-    },
-    processing: {
-      label: "Processing",
-      className: "bg-blue-100 text-blue-800",
-      icon: <Loader2 className="w-3 h-3 animate-spin" />,
-    },
-    success: {
-      label: "Ready",
-      className: "bg-green-100 text-green-800",
-      icon: <Check className="w-3 h-3" />,
-    },
-    failed: {
-      label: "Failed",
-      className: "bg-red-100 text-red-800",
-    },
-  };
-
-  const { label, className, icon } = config[status];
-
-  return (
-    <span className={cn("px-2 py-1 text-xs font-medium rounded-full flex items-center gap-1", className)}>
-      {icon}
-      {label}
-    </span>
   );
 }
