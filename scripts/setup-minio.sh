@@ -1,6 +1,10 @@
 #!/bin/bash
 # MinIO Setup Script for GradeAI
 
+# Resolve paths relative to this script so it works from any working directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 echo "🚀 Setting up MinIO for GradeAI..."
 
 # Check if mc (MinIO Client) is installed

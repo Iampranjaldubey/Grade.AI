@@ -1,204 +1,211 @@
-# GradeAI - Automated Grading Platform
+# GradeAI
 
-An intelligent academic grading platform built with FastAPI, React, and AI-powered evaluation.
+AI-assisted grading for university courses. Professors define rubrics; GradeAI drafts a score
+and per-criterion feedback from the submission and course material. **Nothing reaches a student
+until a professor approves or overrides it.**
 
-## 🎯 Project Status
+Built with FastAPI, React, PostgreSQL, and a retrieval-augmented grading pipeline over ChromaDB.
 
-**Phase 1: Authentication** ✅ Complete
-- User registration and login
-- JWT-based authentication with refresh tokens
-- Role-based access control (Professor/Student/TA/Admin)
+---
 
-**Phase 2: Course Management** ✅ Complete
-- Course CRUD operations with join codes
-- Student enrollment system
-- Assignment and rubric management
-- Complete frontend foundation with auth flows
+## How grading works
 
-**Phase 3: In Progress** 🚧
-- Detailed course and assignment pages
-- File upload and submission system
-- AI-powered grading
-- Analytics dashboard
+1. A professor creates a course, an assignment, and a **rubric** whose criteria weights total 100%.
+2. Course material (lecture notes, sample solutions, rubric documents) is uploaded, parsed,
+   chunked, embedded, and indexed.
+3. A student submits work. The document is parsed and indexed the same way.
+4. A Celery worker retrieves the relevant rubric/notes/sample context and asks the model to score
+   each criterion, returning a score, reasoning per criterion, strengths, weaknesses, and a
+   confidence value.
+5. The professor reviews the draft in a grading workspace and **approves** or **overrides** it.
+   Only then is the grade released to the student.
 
-## 🚀 Quick Start
+Assignments can be `auto` (AI drafts every grade), `manual` (professor grades directly), or
+`hybrid`. If AI grading fails outright, a placeholder is produced and flagged — it is **never**
+auto-approved, even in `auto` mode.
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- PostgreSQL 14+
-- Redis
+---
 
-### Backend Setup
+## Quick start
+
+Requires **Docker** and **Docker Compose**. This brings up Postgres, Redis, ChromaDB, MinIO,
+the API, a Celery worker, the frontend, and an nginx edge proxy.
+
 ```bash
-cd backend
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload
+git clone https://github.com/Iampranjaldubey/Grade.AI.git
+cd Grade.AI
+make dev
 ```
 
-Backend runs at `http://localhost:8000`
-API docs at `http://localhost:8000/docs`
+`make dev` creates `.env` and `backend/.env` from their examples on first run. To enable AI
+grading, add a Google Gemini key to `backend/.env`:
 
-### Frontend Setup
+```
+GEMINI_API_KEY=your-key-here
+```
+
+Then create the storage bucket and apply migrations:
+
 ```bash
+./scripts/setup-minio.sh   # scripts/setup-minio.bat on Windows
+make migrate
+```
+
+| Service | URL |
+| --- | --- |
+| Frontend | http://localhost:3000 |
+| API | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
+| Through nginx | http://localhost |
+| MinIO console | http://localhost:9001 |
+
+Useful targets: `make up`, `make down`, `make logs`, `make test`, `make lint`, `make seed`,
+`make install-hooks`.
+
+### Running without Docker
+
+You still need Postgres, Redis, and ChromaDB reachable. Requires **Python 3.12+** and
+**Node.js 22+**.
+
+```bash
+# Backend
+cd backend
+python -m venv venv && source venv/bin/activate   # venv\Scripts\activate on Windows
+pip install -r requirements.txt
+cp .env.example .env          # then point the URLs at localhost
+alembic upgrade head
+uvicorn app.main:app --reload
+
+# Celery worker (separate shell) — required for document processing and AI grading
+celery -A app.celery_app worker --loglevel=info
+
+# Frontend (separate shell)
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173`
+---
 
-See [SETUP.md](SETUP.md) for detailed instructions.
+## Architecture
 
-## 📚 Documentation
-
-- [SETUP.md](SETUP.md) - Complete setup instructions
-- [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - Detailed feature documentation
-- [phase2-courses.md](phase2-courses.md) - Phase 2 specifications
-
-## 🏗️ Architecture
-
-### Backend Stack
-- **Framework**: FastAPI (async Python web framework)
-- **Database**: PostgreSQL with SQLAlchemy ORM
-- **Cache**: Redis for token management
-- **Authentication**: JWT with refresh token rotation
-- **File Storage**: AWS S3
-- **Vector DB**: ChromaDB for RAG-based grading
-- **Task Queue**: Celery for async grading jobs
-
-### Frontend Stack
-- **Framework**: React 18 with TypeScript
-- **Build Tool**: Vite
-- **Routing**: React Router v6
-- **State Management**: Zustand
-- **Data Fetching**: TanStack Query (React Query)
-- **Forms**: React Hook Form + Zod validation
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
-- **Notifications**: React Hot Toast
-
-## 🎨 Design System
-
-**Colors**
-- Primary (Navy): `#1E3A5F`
-- Accent (Blue): `#2E86AB`
-- Backgrounds: White with gray-50 base
-
-**Typography**
-- Font Family: Inter
-- Clean, professional academic styling
-
-## 🔒 Security Features
-
-- JWT with access/refresh token rotation
-- Automatic token refresh on 401 responses
-- Token blacklisting on logout
-- Rate limiting on login attempts
-- Role-based route protection
-- Ownership verification on all write operations
-
-## 🎓 User Roles
-
-**Professor**
-- Create and manage courses
-- Create assignments with rubrics
-- View enrolled students
-- Grade submissions (manual/AI-assisted)
-- Analytics and insights
-
-**Student**
-- Enroll in courses via join codes
-- View assignments and due dates
-- Submit work
-- View grades and feedback
-
-## 📝 API Endpoints
-
-### Authentication
-- `POST /api/v1/auth/register` - Register new user
-- `POST /api/v1/auth/login` - Login
-- `POST /api/v1/auth/refresh` - Refresh access token
-- `POST /api/v1/auth/logout` - Logout
-- `GET /api/v1/auth/me` - Get current user
-
-### Courses (Professor)
-- `POST /api/v1/courses` - Create course
-- `GET /api/v1/courses` - List courses
-- `GET /api/v1/courses/{id}` - Get course details
-- `PUT /api/v1/courses/{id}` - Update course
-- `DELETE /api/v1/courses/{id}` - Soft delete course
-- `GET /api/v1/courses/{id}/students` - List enrolled students
-
-### Enrollments (Student)
-- `POST /api/v1/enrollments/join` - Join course by code
-- `GET /api/v1/enrollments/my-courses` - List enrolled courses
-- `DELETE /api/v1/enrollments/{course_id}` - Drop course
-
-### Assignments (Professor)
-- `POST /api/v1/assignments` - Create assignment
-- `GET /api/v1/assignments?course_id={id}` - List assignments
-- `GET /api/v1/assignments/{id}` - Get assignment
-- `PUT /api/v1/assignments/{id}` - Update assignment
-- `DELETE /api/v1/assignments/{id}` - Soft delete assignment
-
-### Rubrics (Professor)
-- `POST /api/v1/assignments/{id}/rubrics` - Create rubrics
-- `GET /api/v1/assignments/{id}/rubrics` - List rubrics
-- `PUT /api/v1/rubrics/{id}` - Update rubric
-- `DELETE /api/v1/rubrics/{id}` - Delete rubric
-
-## 🧪 Testing
-
-### Backend
-```bash
-cd backend
-pytest
+```
+nginx ──┬── frontend (React SPA, served by nginx)
+        └── /api ── FastAPI ──┬── PostgreSQL   (system of record)
+                             ├── Redis        (token allowlist/blacklist + Celery broker)
+                             ├── S3 / MinIO   (uploaded documents)
+                             └── Celery ──┬── ChromaDB (vector search)
+                                          └── Gemini   (grading)
 ```
 
-### Frontend
+**Backend** — FastAPI (async), SQLAlchemy 2 + Alembic, Celery, Redis, ChromaDB,
+sentence-transformers (`all-MiniLM-L6-v2`, local) for embeddings, Google Gemini for evaluation,
+structlog with request-ID correlation.
+
+**Frontend** — React 18 + TypeScript, Vite, React Router v7, TanStack Query, Zustand,
+React Hook Form + Zod, Tailwind CSS, Radix primitives for accessible dialogs/menus/tabs.
+
+Documentation lives in [`docs/`](docs/):
+
+| Document | Contents |
+| --- | --- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and boundaries |
+| [RAG_ARCHITECTURE.md](docs/RAG_ARCHITECTURE.md) | Document lifecycle, chunking, retrieval, evaluation |
+| [API.md](docs/API.md) | Endpoint reference |
+| [DATABASE.md](docs/DATABASE.md) | Schema and relationships |
+| [PROJECT_FLOW.md](docs/PROJECT_FLOW.md) | End-to-end user flows |
+| [CODEBASE_GUIDE.md](docs/CODEBASE_GUIDE.md) | Where things live |
+| [DOCUMENT_MANAGEMENT_ARCHITECTURE.md](docs/DOCUMENT_MANAGEMENT_ARCHITECTURE.md) | Upload and processing |
+| [.github/SECRETS.md](.github/SECRETS.md) | Deployment secrets and variables |
+
+Interactive API docs are served at `/docs` in non-production environments.
+
+---
+
+## Configuration
+
+All settings are environment variables; see [`.env.example`](.env.example) and
+[`backend/.env.example`](backend/.env.example) for the full annotated list.
+
+Values that matter most:
+
+| Variable | Notes |
+| --- | --- |
+| `DATABASE_URL` / `DATABASE_URL_SYNC` | Async URL for the API, sync for Celery and Alembic |
+| `REDIS_URL` | Token allowlist/blacklist; also the Celery broker |
+| `JWT_SECRET` | Must be a strong random value; the app refuses to start in production with the default |
+| `GEMINI_API_KEY` | Without it, grading falls back to a flagged placeholder |
+| `PROFESSOR_REGISTRATION_CODE` | Required in production, or anyone could self-register as a professor |
+| `AWS_S3_BUCKET` + endpoints | MinIO locally, S3 in deployment |
+| `MAX_UPLOAD_SIZE_BYTES` | Enforced against the stored object, not the client's claim |
+
+In production the app validates its own configuration at startup and refuses to boot when a
+required value is missing or left at an insecure default.
+
+---
+
+## Security
+
+- Argon2 password hashing; JWT access tokens with a configurable short lifetime.
+- Refresh tokens are an **allowlist** in Redis and are **rotated on every use**; access tokens are
+  blacklisted on logout, with the blacklist TTL derived from the token lifetime.
+- Per-account login lockout after repeated failures, plus rate limiting on registration and
+  presigned-URL requests.
+- Privileged roles cannot be self-assigned at registration without the institution code.
+- Every read and write verifies ownership — professors are scoped to their own courses, students
+  to their own enrolments and submissions. Students cannot read a grade before it is approved.
+- Uploads are validated by magic bytes, not just the declared content type.
+- Grade approvals, overrides, and manual grades are recorded in an audit trail.
+
+---
+
+## Testing
+
 ```bash
-cd frontend
-npm run test
+make test          # both suites
+
+cd backend  && pytest --cov=app     # coverage gate: 80%
+cd frontend && npm run test
 ```
 
-## 📦 Database Schema
+CI (`.github/workflows/ci.yml`) runs, for every pull request: ruff, black, pytest with coverage,
+and mypy for the backend; ESLint, `tsc --noEmit`, Vitest with coverage, and a production build for
+the frontend; then builds both Docker images and verifies the stack comes up healthy.
 
-Key tables:
-- `users` - User accounts with roles
-- `courses` - Course information with join codes
-- `enrollments` - Student course enrollments
-- `assignments` - Assignment details
-- `rubrics` - Grading criteria with weights
-- `submissions` - Student work submissions
-- `evaluations` - AI + manual grades
+Install the pre-commit hooks to catch most of that locally:
 
-See `backend/alembic/versions/001_initial_schema.py` for complete schema.
+```bash
+make install-hooks
+```
 
-## 🔄 CI/CD
+---
 
-GitHub Actions workflows:
-- `.github/workflows/ci.yml` - Run tests on PRs
-- `.github/workflows/deploy-staging.yml` - Deploy to staging
-- `.github/workflows/deploy-production.yml` - Deploy to production
+## Deployment
 
-## 🤝 Contributing
+Container images are defined in [`docker/`](docker/) and ECS task definitions in
+[`deploy/ecs/`](deploy/ecs/). Pushes to `main` deploy to staging; tagging `v*.*.*` promotes the
+same image to production via CodeDeploy blue/green.
 
-1. Create a feature branch: `git checkout -b feature/my-feature`
-2. Make changes and test thoroughly
-3. Run linters: `npm run lint:fix` (frontend), `black .` (backend)
-4. Commit with descriptive message
-5. Push and create pull request
+> **Not yet provisioned.** The task definitions still contain `ACCOUNT_ID`/`REGION` placeholders,
+> and the AWS resources they reference (IAM roles, SSM parameters, ALB listener rules, RDS,
+> ElastiCache, S3, ECR repositories, CodeDeploy groups) are not created by anything in this
+> repository. See [.github/SECRETS.md](.github/SECRETS.md) before a first deploy.
 
-## 📄 License
+---
 
-[Add license information]
+## Contributing
 
-## 👥 Team
+```bash
+git checkout -b feature/my-change
+make lint
+make test
+```
 
-[Add team members]
+Open a pull request; CI must be green before merge.
 
-## 🙏 Acknowledgments
+---
 
-Built with modern best practices and production-ready patterns.
+## License
+
+No licence has been chosen yet. Until one is added, this code is "all rights reserved" by default
+and cannot be reused. Add a `LICENSE` file to change that.

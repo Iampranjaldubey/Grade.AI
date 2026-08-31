@@ -1,4 +1,4 @@
-# Environment
+# Environment / secrets
 .env
 .env.local
 .env.*.local
@@ -13,23 +13,26 @@ __pycache__/
 venv/
 ENV/
 *.egg-info/
-dist/
-build/
 .pytest_cache/
-.coverage
-htmlcov/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+# Stray nested checkout created by running tooling from the wrong directory.
+backend/backend/
 
-# Node
+# Node / frontend build output
 node_modules/
-frontend/dist/
+dist/
+build/
 frontend/.vite/
 frontend/coverage/
 frontend/lint.json
 frontend/*.tsbuildinfo
-frontend/tsconfig.tsbuildinfo
 coverage/
+
+# Logs
 *.log
 npm-debug.log*
 
@@ -45,15 +48,11 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Docker
-*.log
-
-# Alembic
-backend/alembic/versions/*.pyc
-
-# Uploads / local storage
+# Local storage / uploads
 uploads/
 *.sqlite3
 
-# markdown 
-*.txt
+# Personal scratch notes (deliberately not blanket-ignoring *.txt, which would
+# also swallow legitimate files such as requirements.txt).
+notes.txt
+docs/GENERATION_STATUS.txt

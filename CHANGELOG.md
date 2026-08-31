@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to the GradeAI project will be documented in this file.
 
@@ -9,11 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Phase 5 (Upcoming)
-- Analytics dashboard with course insights
-- Grade distribution visualization
-- Assignment completion tracking
-- Student performance trends
+### Added
+- Unified design system across the whole frontend, replacing the previous
+  navy/admin styling with the editorial "graded paper" language that was
+  previously confined to the auth screens
+- New application shell: sidebar navigation on desktop, a focus-trapped drawer on
+  mobile (there was previously no mobile navigation at all), and breadcrumbs
+- Grading workspace that shows the submission, per-criterion AI reasoning, and a
+  clear separation between the AI's recommendation and the professor's decision
+- Reusable UI primitives and data tables with sorting, filtering, and pagination
+- Registration code requirement for professor/TA/admin sign-ups, plus rate
+  limiting on registration and presigned-URL requests
+- Audit trail for grade approvals, overrides, and manual grades
+- `/health/live` liveness probe; `/health` now returns 503 when a required
+  dependency is unavailable
+- Route-level code splitting and an error boundary in the frontend
+
+### Fixed
+- Re-running AI grading could silently discard a professor's approved or
+  overridden grade
+- Students never saw their per-criterion breakdown, because the page read the
+  professor response shape rather than the student one
+- Grading screen never displayed the submission being graded
+- `ACCESS_TOKEN_EXPIRE_MINUTES` was ignored; the logout blacklist TTL is now
+  derived from it so a revoked token cannot outlive its blacklist entry
+- Celery tasks and Gemini requests are now bounded by timeouts; a stalled call
+  previously held a worker slot indefinitely
+- A swallowed Celery `Retry` made the documented wait for document parsing
+  shorter than intended and logged spurious failures
+- N+1 query pattern when listing submissions with their evaluations
+- Brand typeface was never applied, because the base font referenced a font that
+  was never loaded
+
+### Changed
+- `docker compose` now works on a fresh clone; `backend/.env.example` was missing
+- Removed development status/phase notes from the repository root
 
 ---
 
@@ -41,8 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `backend/app/api/v1/router.py` - Registered evaluations router (already present)
 
 #### Documentation
-- `PHASE4_IMPLEMENTATION.md` - Complete technical documentation (600+ lines)
-- `PHASE4_TESTING.md` - Comprehensive testing guide with curl examples (800+ lines)
 - Updated `CHANGELOG.md` with Phase 4 completion
 
 #### Technical Details
@@ -72,15 +100,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Detailed Feedback**: Strengths (max 3), weaknesses (max 3), missing topics
 - **Confidence Score**: AI self-assessment (0.0-1.0)
 - **Source Transparency**: Tracks which documents influenced grading
-- **Approval Workflow**: Pending → Approved/Overridden
+- **Approval Workflow**: Pending â†’ Approved/Overridden
 - **Audit Trail**: Stores retrieved_chunks for transparency
 
 #### Error Handling
-- Document not processed → retry after 60s (max 5 retries)
-- Gemini API timeout → exponential backoff (60s, 120s, 240s)
-- Invalid JSON response → retry once with simplified prompt
-- All failures → fallback evaluation with 50% scores and manual review flag
-- Missing collection → gracefully returns empty context (no crash)
+- Document not processed â†’ retry after 60s (max 5 retries)
+- Gemini API timeout â†’ exponential backoff (60s, 120s, 240s)
+- Invalid JSON response â†’ retry once with simplified prompt
+- All failures â†’ fallback evaluation with 50% scores and manual review flag
+- Missing collection â†’ gracefully returns empty context (no crash)
 
 #### Security Features
 - Course ownership verification on all professor actions
@@ -137,12 +165,6 @@ google-generativeai>=0.8.0 (already in requirements.txt)
 - `backend/app/tasks/grading.py` - Complete process_document task implementation
 
 #### Documentation
-- `PHASE3B_IMPLEMENTATION.md` - Full technical documentation (400+ lines)
-- `PHASE3B_TESTING.md` - Comprehensive testing guide (500+ lines)
-- `PHASE3B_SUMMARY.md` - Executive summary
-- `PHASE3B_README.md` - Quick start guide
-- `PHASE3B_QUICK_REFERENCE.md` - One-page cheat sheet
-- `PHASE3B_COMPLETE.md` - Completion summary
 - Updated `PROJECT_STATUS.md` with Phase 3B completion
 
 #### Technical Details
@@ -195,8 +217,6 @@ sentence-transformers==3.0.0
 - `backend/app/api/v1/endpoints/submissions.py` - Submission management
 
 #### Documentation
-- `PHASE3A_IMPLEMENTATION.md` - Complete implementation documentation
-- `PHASE3A_TESTING.md` - Testing guide with curl examples
 
 #### Technical Details
 - Presigned URLs valid for 1 hour (upload) and 24 hours (download)
@@ -241,8 +261,6 @@ sentence-transformers==3.0.0
 - Consistent styling with Tailwind CSS
 
 #### Documentation
-- `PHASE3_IMPLEMENTATION.md` - Complete frontend documentation
-- `PHASE3_TESTING.md` - Manual testing checklist
 
 ---
 
@@ -273,8 +291,6 @@ sentence-transformers==3.0.0
 - Create Course Modal
 
 #### Documentation
-- `IMPLEMENTATION_SUMMARY.md` - Detailed feature documentation
-- `phase2-courses.md` - Phase 2 specifications
 
 ---
 
