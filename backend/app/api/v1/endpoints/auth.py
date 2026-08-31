@@ -9,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.deps import (
-    BLACKLIST_TTL_SECONDS,
-    REFRESH_TTL_SECONDS,
+    blacklist_ttl_seconds,
     get_current_user,
     get_db,
     get_redis,
+    refresh_ttl_seconds,
 )
 from app.core.enums import UserRole
 from app.core.rate_limit import RateLimiter
@@ -40,7 +40,12 @@ router = APIRouter()
 
 LOCKOUT_TTL_SECONDS = 15 * 60
 MAX_LOGIN_ATTEMPTS = 5
-ACCESS_TOKEN_EXPIRES_IN = 900
+
+
+def _access_token_expires_in() -> int:
+    """Seconds until an issued access token expires, per configuration."""
+    return get_settings().access_token_expire_minutes * 60
+
 
 # Roles that can create courses, see other students' work, or grade. These must
 # not be self-assignable from a public endpoint without proof of authorisation.
@@ -86,7 +91,7 @@ async def _store_refresh_token(redis: Redis, refresh_token: str, user_id: uuid.U
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to issue refresh token",
         )
-    await redis.set(f"refresh:{jti}", str(user_id), ex=REFRESH_TTL_SECONDS)
+    await redis.set(f"refresh:{jti}", str(user_id), ex=refresh_ttl_seconds())
 
 
 async def _revoke_refresh_token(redis: Redis, refresh_token: str) -> None:
@@ -101,7 +106,7 @@ def _token_response(user: User, access_token: str, refresh_token: str) -> TokenR
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRES_IN,
+        expires_in=_access_token_expires_in(),
         user=UserRead.model_validate(user),
     )
 
@@ -251,7 +256,7 @@ async def refresh_tokens(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRES_IN,
+        expires_in=_access_token_expires_in(),
         user=None,
     )
 
@@ -269,7 +274,7 @@ async def logout(
 ) -> MessageResponse:
     access_jti = getattr(request.state, "access_jti", None)
     if access_jti:
-        await redis.set(f"blacklist:{access_jti}", "1", ex=BLACKLIST_TTL_SECONDS)
+        await redis.set(f"blacklist:{access_jti}", "1", ex=blacklist_ttl_seconds())
 
     await _revoke_refresh_token(redis, payload.refresh_token)
     return MessageResponse(message="logged out")

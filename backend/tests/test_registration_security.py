@@ -17,6 +17,7 @@ import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
 
+from app.core.config import Settings, get_settings
 from app.core.enums import UserRole
 from app.core.rate_limit import RateLimiter, _client_key
 from tests.fake_redis import FakeRedis
@@ -24,8 +25,14 @@ from tests.fake_redis import FakeRedis
 REGISTRATION_CODE = "faculty-code-123"
 
 
-def _settings_with_code(code: str) -> SimpleNamespace:
-    return SimpleNamespace(professor_registration_code=code)
+def _settings_with_code(code: str) -> Settings:
+    """
+    A real Settings copy with only the registration code overridden.
+
+    Deliberately not a hand-rolled stub: the auth module reads several settings,
+    so a partial fake would break whenever another one is used.
+    """
+    return get_settings().model_copy(update={"professor_registration_code": code})
 
 
 def _fake_request(host: str = "10.0.0.1", forwarded: str | None = None) -> SimpleNamespace:

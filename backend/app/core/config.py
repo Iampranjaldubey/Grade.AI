@@ -49,7 +49,10 @@ class Settings(BaseSettings):
 
     jwt_secret: str = Field(default="change-me", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    # Access tokens are short-lived; clients refresh via the refresh token. This
+    # value is authoritative for the token's exp, the `expires_in` field, and the
+    # logout blacklist TTL.
+    access_token_expire_minutes: int = Field(default=15, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")

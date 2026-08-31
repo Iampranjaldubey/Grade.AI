@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -29,6 +29,13 @@ from app.schemas.evaluation import (
     ManualEvaluationCreate,
     OverrideEvaluationRequest,
     StudentEvaluationOut,
+)
+from app.services.audit_service import (
+    ACTION_EVALUATION_APPROVED,
+    ACTION_EVALUATION_MANUAL_CREATED,
+    ACTION_EVALUATION_OVERRIDDEN,
+    ENTITY_EVALUATION,
+    record_audit_log,
 )
 from app.tasks.grading import (
     MANUAL_EVALUATION_EXISTS,
@@ -175,6 +182,7 @@ async def get_evaluation_detail(
 async def approve_evaluation(
     evaluation_id: uuid.UUID,
     request: ApproveEvaluationRequest,
+    http_request: Request,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationOut:
@@ -223,6 +231,9 @@ async def approve_evaluation(
             ),
         )
 
+    # Captured before the UPDATE so the audit entry records what was approved.
+    ai_score_before = evaluation.ai_score
+
     # Approve via an atomic compare-and-swap: the UPDATE only applies if the row
     # is still PENDING. This closes the race where two concurrent approve/override
     # calls both pass the pre-check above and the second silently clobbers the first.
@@ -252,6 +263,21 @@ async def approve_evaluation(
     # Update submission status
     evaluation.submission.status = SubmissionStatus.EVALUATED
 
+    await record_audit_log(
+        db,
+        user_id=current_user.id,
+        action=ACTION_EVALUATION_APPROVED,
+        entity_type=ENTITY_EVALUATION,
+        entity_id=evaluation_id,
+        old_value={"approval_status": ApprovalStatus.PENDING.value, "final_score": None},
+        new_value={
+            "approval_status": ApprovalStatus.APPROVED.value,
+            "final_score": float(ai_score_before),
+            "professor_feedback": request.professor_feedback,
+        },
+        request=http_request,
+    )
+
     await db.commit()
     await db.refresh(evaluation)
 
@@ -269,6 +295,7 @@ async def approve_evaluation(
 async def override_evaluation(
     evaluation_id: uuid.UUID,
     request: OverrideEvaluationRequest,
+    http_request: Request,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationOut:
@@ -319,6 +346,9 @@ async def override_evaluation(
             detail=f"Evaluation already {evaluation.approval_status.value}",
         )
 
+    # Captured before the UPDATE so the audit entry records what was replaced.
+    ai_score_before = evaluation.ai_score
+
     # Override via an atomic compare-and-swap: the UPDATE only applies if the row
     # is still PENDING, closing the concurrent approve/override clobber race.
     values = {
@@ -352,6 +382,24 @@ async def override_evaluation(
     # Update submission status
     evaluation.submission.status = SubmissionStatus.EVALUATED
 
+    await record_audit_log(
+        db,
+        user_id=current_user.id,
+        action=ACTION_EVALUATION_OVERRIDDEN,
+        entity_type=ENTITY_EVALUATION,
+        entity_id=evaluation_id,
+        old_value={
+            "approval_status": ApprovalStatus.PENDING.value,
+            "ai_score": float(ai_score_before) if ai_score_before is not None else None,
+        },
+        new_value={
+            "approval_status": ApprovalStatus.OVERRIDDEN.value,
+            "final_score": float(request.final_score),
+            "professor_feedback": request.professor_feedback,
+        },
+        request=http_request,
+    )
+
     await db.commit()
     await db.refresh(evaluation)
 
@@ -370,6 +418,7 @@ async def override_evaluation(
 async def create_manual_evaluation(
     submission_id: uuid.UUID,
     request: ManualEvaluationCreate,
+    http_request: Request,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationOut:
@@ -450,6 +499,26 @@ async def create_manual_evaluation(
 
     # Update submission status
     submission.status = SubmissionStatus.EVALUATED
+
+    # Flush so the generated primary key is available to reference in the audit
+    # entry; the commit below still makes both atomic.
+    await db.flush()
+
+    await record_audit_log(
+        db,
+        user_id=current_user.id,
+        action=ACTION_EVALUATION_MANUAL_CREATED,
+        entity_type=ENTITY_EVALUATION,
+        entity_id=evaluation.id,
+        old_value=None,
+        new_value={
+            "approval_status": ApprovalStatus.OVERRIDDEN.value,
+            "final_score": float(request.final_score),
+            "professor_feedback": request.professor_feedback,
+            "ai_score": None,
+        },
+        request=http_request,
+    )
 
     await db.commit()
     await db.refresh(evaluation)
