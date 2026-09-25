@@ -1,6 +1,7 @@
-import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, FileText, Award, ChevronRight } from "lucide-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { CalendarClock, FileText, Award, ChevronRight, LogOut } from "lucide-react";
+import toast from "react-hot-toast";
 import * as api from "@/lib/api";
 import { submissionsApi } from "@/lib/api";
 import { AppShell } from "@/components/layout";
@@ -9,6 +10,7 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  Button,
   EmptyState,
   ErrorState,
   PageHeader,
@@ -20,6 +22,8 @@ import type { SubmissionOut } from "@/types";
 
 export function StudentCourseDetailPage() {
   const { courseId } = useParams<{ courseId: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const {
     data: course,
@@ -58,6 +62,24 @@ export function StudentCourseDetailPage() {
     enabled: assignments.length > 0,
   });
 
+  const leaveCourseMutation = useMutation({
+    mutationFn: () => api.leaveCourse(courseId!),
+    onSuccess: () => {
+      toast.success("Successfully dropped course");
+      queryClient.invalidateQueries({ queryKey: ["my-courses"] });
+      navigate("/student/courses");
+    },
+    onError: (error) => {
+      toast.error(api.getErrorMessage(error, "Failed to drop course"));
+    },
+  });
+
+  const handleDropCourse = () => {
+    if (window.confirm("Are you sure you want to drop this course? All your submissions and grades will be lost.")) {
+      leaveCourseMutation.mutate();
+    }
+  };
+
   const breadcrumbs = [
     { label: "My Courses", to: "/student/courses" },
     { label: course?.course_code ?? "Course" },
@@ -93,6 +115,16 @@ export function StudentCourseDetailPage() {
         <PageHeader
           title={course.course_name}
           description={`${course.course_code} · ${course.semester}`}
+          actions={
+            <Button
+              variant="destructive"
+              onClick={handleDropCourse}
+              disabled={leaveCourseMutation.isPending}
+            >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
+              Drop course
+            </Button>
+          }
         />
 
         {course.description && (
