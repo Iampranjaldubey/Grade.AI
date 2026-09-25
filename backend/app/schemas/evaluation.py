@@ -118,7 +118,7 @@ class ManualEvaluationCreate(BaseModel):
 
     final_score: Decimal = Field(
         ...,
-        gt=0,
+        ge=0,
         description="Final score determined by professor",
     )
     professor_feedback: str = Field(

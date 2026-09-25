@@ -624,6 +624,7 @@ async def get_student_evaluation(
             (Evaluation.approval_status == ApprovalStatus.APPROVED)
             | (Evaluation.approval_status == ApprovalStatus.OVERRIDDEN)
         )
+        .options(joinedload(Evaluation.submission).joinedload(Submission.assignment))
     )
 
     result = await db.execute(query)
@@ -643,9 +644,13 @@ async def get_student_evaluation(
     overall_feedback = "Your submission has been evaluated."
     percentage = 0.0
 
+    if evaluation.final_score is not None:
+        max_score = evaluation.submission.assignment.max_score
+        if max_score > 0:
+            percentage = float((evaluation.final_score / max_score) * 100)
+
     if evaluation.ai_feedback and isinstance(evaluation.ai_feedback, dict):
         criteria_scores = evaluation.ai_feedback.get("criteria_scores", [])
-        percentage = evaluation.ai_feedback.get("percentage", 0.0)
 
         # Build overall feedback from AI feedback or professor feedback
         if evaluation.professor_feedback:
