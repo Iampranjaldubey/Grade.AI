@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
 from app.core.deps import get_current_professor, get_current_student, get_db
-from app.core.enums import DocumentType, EnrollmentStatus, ParseStatus, SubmissionStatus
+from app.core.enums import ApprovalStatus, DocumentType, EnrollmentStatus, ParseStatus, SubmissionStatus
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment
 from app.models.course import Course

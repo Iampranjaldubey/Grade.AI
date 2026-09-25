@@ -1,6 +1,6 @@
 services:
   minio:
-    image: minio/minio
+    image: elestio/minio:latest
     ports:
       - "9000:9000"
       - "9001:9001"

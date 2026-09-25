@@ -100,6 +100,7 @@ async def test_confirm_accepts_within_limit(client: AsyncClient, monkeypatch) ->
     fake_s3.get_file_size.return_value = 2048  # well under the cap
     fake_s3.generate_presigned_download_url.return_value = "http://example.com/dl"
     monkeypatch.setattr("app.api.v1.endpoints.uploads.get_s3_service", lambda settings: fake_s3)
+    monkeypatch.setattr("app.api.v1.endpoints.uploads.process_document.delay", lambda x: None)
 
     resp = await client.post(
         "/api/v1/uploads/confirm",
