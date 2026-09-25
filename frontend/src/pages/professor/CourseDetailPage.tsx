@@ -12,12 +12,14 @@ import {
   Award,
   FolderOpen,
   Info,
+  Settings,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import * as api from "@/lib/api";
 import { uploadsApi } from "@/lib/api";
 import { AppShell } from "@/components/layout";
 import { CreateAssignmentModal } from "@/components/CreateAssignmentModal";
+import { EditCourseModal } from "@/components/EditCourseModal";
 import {
   Badge,
   Button,
@@ -54,6 +56,7 @@ export function CourseDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const {
     data: course,
@@ -123,10 +126,16 @@ export function CourseDetailPage() {
           title={course.course_name}
           description={`${course.course_code} · ${course.semester}`}
           actions={
-            <Button onClick={() => setIsCreateModalOpen(true)}>
-              <Plus className="h-4 w-4" />
-              New assignment
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setIsEditModalOpen(true)}>
+                <Settings className="h-4 w-4" />
+                Settings
+              </Button>
+              <Button onClick={() => setIsCreateModalOpen(true)}>
+                <Plus className="h-4 w-4" />
+                New assignment
+              </Button>
+            </div>
           }
         />
 
@@ -208,6 +217,11 @@ export function CourseDetailPage() {
         courseId={courseId!}
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+      />
+      <EditCourseModal
+        course={course}
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
       />
     </AppShell>
   );
