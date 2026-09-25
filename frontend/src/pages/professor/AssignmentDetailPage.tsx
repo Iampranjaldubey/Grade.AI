@@ -1,3 +1,4 @@
+import React from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -7,10 +8,12 @@ import {
   FileText,
   FolderOpen,
   Info,
+  Settings,
 } from "lucide-react";
 import * as api from "@/lib/api";
 import { submissionsApi, uploadsApi } from "@/lib/api";
 import { AppShell } from "@/components/layout";
+import { EditAssignmentModal } from "@/components/EditAssignmentModal";
 import {
   Badge,
   Card,
@@ -50,6 +53,7 @@ export function AssignmentDetailPage() {
     assignmentId: string;
   }>();
   const queryClient = useQueryClient();
+  const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
 
   const {
     data: assignment,
@@ -131,7 +135,15 @@ export function AssignmentDetailPage() {
           description={`${assignment.max_score} points · due ${formatDateTime(
             assignment.due_date,
           )}`}
-          actions={<StatusBadge kind="gradingMode" value={assignment.grading_mode} />}
+          actions={
+            <div className="flex items-center gap-3">
+              <Button variant="outline" onClick={() => setIsEditModalOpen(true)}>
+                <Settings className="h-4 w-4" />
+                Settings
+              </Button>
+              <StatusBadge kind="gradingMode" value={assignment.grading_mode} />
+            </div>
+          }
         />
 
         <Tabs defaultValue="rubric">
@@ -218,6 +230,11 @@ export function AssignmentDetailPage() {
           </TabsContent>
         </Tabs>
       </div>
+      <EditAssignmentModal
+        assignment={assignment}
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+      />
     </AppShell>
   );
 }
