@@ -341,6 +341,18 @@ export async function getRubrics(assignmentId: string): Promise<RubricOut[]> {
   return data;
 }
 
+export async function updateRubric(
+  rubricId: string,
+  payload: Partial<Omit<RubricOut, "id" | "assignment_id" | "created_at" | "updated_at">>
+): Promise<RubricOut> {
+  const { data } = await apiClient.put<RubricOut>(`/rubrics/${rubricId}`, payload);
+  return data;
+}
+
+export async function deleteRubric(rubricId: string): Promise<void> {
+  await apiClient.delete(`/rubrics/${rubricId}`);
+}
+
 // ---------------------------------------------------------------------------
 // Uploads API
 // ---------------------------------------------------------------------------

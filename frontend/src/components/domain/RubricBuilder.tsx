@@ -10,6 +10,7 @@ import {
   Plus,
   Save,
   Trash2,
+  Settings,
   X,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -29,6 +30,7 @@ import {
   Skeleton,
   Textarea,
 } from "@/components/ui";
+import { EditRubricModal } from "@/components/EditRubricModal";
 import type { RubricCreate, RubricOut } from "@/types";
 
 const criterionSchema = z.object({
@@ -67,6 +69,7 @@ export function RubricBuilder({
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<RubricCreate[] | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [editingRubric, setEditingRubric] = useState<RubricOut | null>(null);
 
   const {
     register,
@@ -206,7 +209,7 @@ export function RubricBuilder({
                   <div className="flex flex-shrink-0 items-center gap-2">
                     <Badge tone="neutral">{criterion.weight}%</Badge>
                     <Badge tone="neutral">{criterion.max_points} pts</Badge>
-                    {isEditing && (
+                    {isEditing ? (
                       <button
                         type="button"
                         onClick={() => removeCriterion(index)}
@@ -214,6 +217,15 @@ export function RubricBuilder({
                         className="rounded-md p-1.5 text-content-muted hover:bg-danger-subtle hover:text-danger-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-safe:transition-colors"
                       >
                         <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditingRubric(criterion as RubricOut)}
+                        aria-label={`Edit ${criterion.criteria_name}`}
+                        className="rounded-md p-1.5 text-content-muted hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-safe:transition-colors"
+                      >
+                        <Settings className="h-4 w-4" />
                       </button>
                     )}
                   </div>
@@ -368,6 +380,14 @@ export function RubricBuilder({
           </div>
         )}
       </CardContent>
+
+      {editingRubric && (
+        <EditRubricModal
+          rubric={editingRubric}
+          isOpen={true}
+          onClose={() => setEditingRubric(null)}
+        />
+      )}
     </Card>
   );
 }
