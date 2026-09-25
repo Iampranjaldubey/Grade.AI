@@ -411,6 +411,10 @@ def evaluate_submission(self, submission_id: str) -> dict:
             attempt=self.request.retries + 1,
         )
 
+        if isinstance(exc, ValueError):
+            logger.error("permanent_error_no_retry", submission_id=submission_id, error=str(exc))
+            raise
+
         # Retry with exponential backoff
         if self.request.retries < self.max_retries:
             countdown = 60 * (2**self.request.retries)  # 60s, 120s, 240s
@@ -684,6 +688,10 @@ def process_document(self, document_id: str) -> dict:
                 original_error=str(exc),
             )
             # Continue - will surface on next retry if DB truly unreachable
+
+        if isinstance(exc, ValueError):
+            logger.error("permanent_error_no_retry", document_id=document_id, error=str(exc))
+            raise
 
         # Retry with exponential backoff (always use ORIGINAL exception)
         if self.request.retries < self.max_retries:
