@@ -1,8 +1,8 @@
 """
 Tests for NEW-2: on resubmission, the previous attempt's submission Document(s)
-and their ChromaDB vectors are removed (no leak) and the stale Evaluation is
-deleted so the new submission is re-graded from scratch (rather than being
-blocked by a prior manual grade via the ai_score-None skip guard).
+and their ChromaDB vectors are removed (no leak). A submission is blocked
+from resubmitting if it has already received a final (approved or overridden)
+grade.
 """
 
 import uuid
@@ -44,6 +44,7 @@ def mock_backends(monkeypatch):
     chroma = MagicMock()
     monkeypatch.setattr("app.api.v1.endpoints.submissions.get_s3_service", lambda settings: s3)
     monkeypatch.setattr("app.api.v1.endpoints.submissions.ChromaDBClient", lambda settings: chroma)
+    monkeypatch.setattr("app.api.v1.endpoints.submissions.process_document.delay", lambda x: None)
     return s3, chroma
 
 
@@ -120,7 +121,7 @@ async def test_resubmission_does_not_leak_documents(
 
 
 @pytest.mark.asyncio
-async def test_resubmission_deletes_stale_manual_evaluation(
+async def test_resubmission_blocked_if_manual_evaluation_exists(
     client: AsyncClient, db_session: AsyncSession, mock_backends
 ) -> None:
     token, aid, student_id = await _setup(client, db_session, "RS2")
@@ -141,10 +142,16 @@ async def test_resubmission_deletes_stale_manual_evaluation(
     )
     await db_session.commit()
 
-    await _submit(client, token, aid, "v2.pdf")  # resubmission
-
-    # The stale evaluation must be gone so the new submission can be re-graded.
-    remaining = await db_session.execute(
-        select(func.count()).where(Evaluation.submission_id == submission_id)
+    # Resubmission should be blocked because the grade is already finalized.
+    resp = await client.post(
+        "/api/v1/submissions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "assignment_id": aid,
+            "file_name": "v2.pdf",
+            "file_key": f"key/{uuid.uuid4()}_v2.pdf",
+            "file_size_bytes": 1000,
+        },
     )
-    assert remaining.scalar_one() == 0
+    assert resp.status_code == 400
+    assert "received a final grade" in resp.json()["message"]
