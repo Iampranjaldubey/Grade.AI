@@ -191,6 +191,18 @@ async def create_submission(
     existing_submission = existing_result.scalar_one_or_none()
 
     if existing_submission:
+        # Check if the submission has already received a final grade
+        existing_eval_result = await db.execute(
+            select(Evaluation).where(Evaluation.submission_id == existing_submission.id)
+        )
+        existing_eval = existing_eval_result.scalar_one_or_none()
+        
+        if existing_eval and existing_eval.approval_status in (ApprovalStatus.APPROVED, ApprovalStatus.OVERRIDDEN):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot resubmit an assignment that has already received a final grade",
+            )
+
         # Resubmission: clean up the previous attempt's document(s), chunks,
         # vectors, and evaluation before recording the new file, so nothing
         # orphans and the new work is re-graded from scratch.
