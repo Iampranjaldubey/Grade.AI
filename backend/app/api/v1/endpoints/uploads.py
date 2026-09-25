@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user, get_db
-from app.core.enums import ParseStatus
+from app.core.enums import ParseStatus, UserRole, DocumentType
 from app.core.rate_limit import RateLimiter
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment
@@ -129,6 +129,13 @@ async def presign_upload(
     # Verify course access
     await _verify_course_access(payload.course_id, current_user, db)
 
+    # Prevent students from uploading non-submission documents
+    if current_user.role == UserRole.STUDENT and payload.doc_type != DocumentType.SUBMISSION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Students can only upload submission documents",
+        )
+
     # If assignment_id provided, verify it belongs to the course
     if payload.assignment_id:
         assignment_result = await db.execute(
@@ -184,6 +191,13 @@ async def confirm_upload(
 
     # Verify course access
     await _verify_course_access(payload.course_id, current_user, db)
+
+    # Prevent students from uploading non-submission documents
+    if current_user.role == UserRole.STUDENT and payload.doc_type != DocumentType.SUBMISSION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Students can only upload submission documents",
+        )
 
     # Verify file exists in S3
     s3_service = get_s3_service(settings)
