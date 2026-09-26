@@ -204,7 +204,7 @@ export function EditRubricModal({ rubric, isOpen, onClose }: EditRubricModalProp
           <DialogFooter className="sm:justify-between">
             <Button
               type="button"
-              variant="destructive"
+              variant="danger"
               onClick={handleDelete}
               disabled={deleteMutation.isPending || updateMutation.isPending}
             >
