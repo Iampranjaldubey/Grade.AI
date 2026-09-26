@@ -85,7 +85,7 @@ export function EditAssignmentModal({
   }, [isOpen, assignment, reset]);
 
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<AssignmentOut>) =>
+    mutationFn: (data: Partial<import("@/types").AssignmentCreate>) =>
       api.updateAssignment(assignment.id, data),
     onSuccess: (updatedAssignment) => {
       queryClient.setQueryData(["assignment", assignment.id], updatedAssignment);
@@ -228,7 +228,7 @@ export function EditAssignmentModal({
           <DialogFooter className="sm:justify-between">
             <Button
               type="button"
-              variant="destructive"
+              variant="danger"
               onClick={handleDelete}
               disabled={deleteMutation.isPending || updateMutation.isPending}
             >

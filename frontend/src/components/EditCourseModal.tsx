@@ -187,7 +187,7 @@ export function EditCourseModal({ course, isOpen, onClose }: EditCourseModalProp
           <DialogFooter className="sm:justify-between">
             <Button
               type="button"
-              variant="destructive"
+              variant="danger"
               onClick={handleDelete}
               disabled={deleteMutation.isPending || updateMutation.isPending}
             >

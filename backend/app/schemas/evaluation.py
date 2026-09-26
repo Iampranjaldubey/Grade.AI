@@ -36,7 +36,7 @@ class EvaluationOut(BaseModel):
     approval_status: ApprovalStatus
     evaluated_at: datetime
     approved_at: datetime | None = None
-    
+
     # Submission details for frontend
     file_url: str | None = None
     file_name: str | None = None

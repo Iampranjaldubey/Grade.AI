@@ -9,7 +9,13 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
 from app.core.deps import get_current_professor, get_current_student, get_db
-from app.core.enums import ApprovalStatus, DocumentType, EnrollmentStatus, ParseStatus, SubmissionStatus
+from app.core.enums import (
+    ApprovalStatus,
+    DocumentType,
+    EnrollmentStatus,
+    ParseStatus,
+    SubmissionStatus,
+)
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment
 from app.models.course import Course
@@ -196,8 +202,11 @@ async def create_submission(
             select(Evaluation).where(Evaluation.submission_id == existing_submission.id)
         )
         existing_eval = existing_eval_result.scalar_one_or_none()
-        
-        if existing_eval and existing_eval.approval_status in (ApprovalStatus.APPROVED, ApprovalStatus.OVERRIDDEN):
+
+        if existing_eval and existing_eval.approval_status in (
+            ApprovalStatus.APPROVED,
+            ApprovalStatus.OVERRIDDEN,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot resubmit an assignment that has already received a final grade",

@@ -14,8 +14,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.core.deps import require_professor, require_student
 from app.core.config import Settings, get_settings
+from app.core.deps import require_professor, require_student
 from app.core.enums import ApprovalStatus, SubmissionStatus
 from app.db.session import get_db
 from app.models.assignment import Assignment
@@ -23,7 +23,6 @@ from app.models.course import Course
 from app.models.evaluation import Evaluation
 from app.models.submission import Submission
 from app.models.user import User
-from app.services.s3_service import get_s3_service
 from app.schemas.evaluation import (
     ApproveEvaluationRequest,
     EvaluationListOut,
@@ -39,6 +38,7 @@ from app.services.audit_service import (
     ENTITY_EVALUATION,
     record_audit_log,
 )
+from app.services.s3_service import get_s3_service
 from app.tasks.grading import (
     MANUAL_EVALUATION_EXISTS,
     PROFESSOR_APPROVAL_EXISTS,
@@ -158,8 +158,7 @@ async def get_evaluation_detail(
             joinedload(Evaluation.submission)
             .joinedload(Submission.assignment)
             .joinedload(Assignment.course),
-            joinedload(Evaluation.submission)
-            .joinedload(Submission.student)
+            joinedload(Evaluation.submission).joinedload(Submission.student),
         )
     )
 
@@ -184,10 +183,16 @@ async def get_evaluation_detail(
     if evaluation.submission:
         s3_service = get_s3_service(settings)
         try:
-            fresh_url = s3_service.generate_presigned_download_url(evaluation.submission.file_key, expires=3600)
+            fresh_url = (
+                s3_service.generate_presigned_download_url(
+                    evaluation.submission.file_key, expires=3600
+                )
+                if evaluation.submission.file_key
+                else evaluation.submission.file_url
+            )
         except Exception:
             fresh_url = evaluation.submission.file_url
-            
+
         out.file_url = fresh_url
         out.file_name = evaluation.submission.file_name
         if evaluation.submission.student:
@@ -638,7 +643,7 @@ async def get_evaluation_by_submission(
         .where(Evaluation.submission_id == submission_id)
         .options(
             joinedload(Evaluation.submission).joinedload(Submission.assignment),
-            joinedload(Evaluation.submission).joinedload(Submission.student)
+            joinedload(Evaluation.submission).joinedload(Submission.student),
         )
     )
 
@@ -655,10 +660,16 @@ async def get_evaluation_by_submission(
     if evaluation.submission:
         s3_service = get_s3_service(settings)
         try:
-            fresh_url = s3_service.generate_presigned_download_url(evaluation.submission.file_key, expires=3600)
+            fresh_url = (
+                s3_service.generate_presigned_download_url(
+                    evaluation.submission.file_key, expires=3600
+                )
+                if evaluation.submission.file_key
+                else evaluation.submission.file_url
+            )
         except Exception:
             fresh_url = evaluation.submission.file_url
-            
+
         out.file_url = fresh_url
         out.file_name = evaluation.submission.file_name
         if evaluation.submission.student:

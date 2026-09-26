@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user, get_db
-from app.core.enums import ParseStatus, UserRole, DocumentType
+from app.core.enums import DocumentType, ParseStatus, UserRole
 from app.core.rate_limit import RateLimiter
 from app.infrastructure.chromadb_client import ChromaDBClient
 from app.models.assignment import Assignment

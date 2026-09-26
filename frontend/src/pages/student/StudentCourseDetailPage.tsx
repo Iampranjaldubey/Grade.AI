@@ -63,7 +63,7 @@ export function StudentCourseDetailPage() {
   });
 
   const leaveCourseMutation = useMutation({
-    mutationFn: () => api.leaveCourse(courseId!),
+    mutationFn: () => api.dropCourse(courseId!),
     onSuccess: () => {
       toast.success("Successfully dropped course");
       queryClient.invalidateQueries({ queryKey: ["my-courses"] });
@@ -117,7 +117,7 @@ export function StudentCourseDetailPage() {
           description={`${course.course_code} · ${course.semester}`}
           actions={
             <Button
-              variant="destructive"
+              variant="danger"
               onClick={handleDropCourse}
               disabled={leaveCourseMutation.isPending}
             >
