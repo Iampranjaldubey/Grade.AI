@@ -211,8 +211,8 @@ export function EvaluationReviewPage() {
         <PageHeader
           title={isDecided ? "Graded submission" : "Review AI evaluation"}
           description={
-            listItem
-              ? `${listItem.student_name} · ${listItem.assignment_title}`
+            evaluation?.student_name && evaluation?.assignment_title
+              ? `${evaluation.student_name} · ${evaluation.assignment_title}`
               : "Check the AI's rubric-by-rubric reasoning, then approve or override."
           }
           actions={
@@ -265,18 +265,20 @@ export function EvaluationReviewPage() {
           {/* LEFT — the work being graded */}
           <div className="space-y-6">
             <SubmissionViewer
-              studentName={listItem?.student_name}
-              studentEmail={listItem?.student_email}
+              studentName={evaluation.student_name}
+              studentEmail={evaluation.student_email}
+              fileName={evaluation.file_name}
+              fileUrl={evaluation.file_url}
               unavailableNote="The submitted document isn't available from this endpoint yet."
             />
-            {listItem && (
+            {evaluation.assignment_title && (
               <Card>
                 <CardHeader>
                   <CardTitle>Assignment</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="font-medium text-content">
-                    {listItem.assignment_title}
+                    {evaluation.assignment_title}
                   </p>
                 </CardContent>
               </Card>

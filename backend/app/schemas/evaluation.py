@@ -36,6 +36,13 @@ class EvaluationOut(BaseModel):
     approval_status: ApprovalStatus
     evaluated_at: datetime
     approved_at: datetime | None = None
+    
+    # Submission details for frontend
+    file_url: str | None = None
+    file_name: str | None = None
+    student_name: str | None = None
+    student_email: str | None = None
+    assignment_title: str | None = None
 
     @property
     def confidence_score(self) -> float:

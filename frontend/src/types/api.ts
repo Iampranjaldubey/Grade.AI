@@ -188,6 +188,11 @@ export interface EvaluationOut {
   approval_status: ApprovalStatus;
   evaluated_at: string;
   approved_at: string | null;
+  file_url?: string;
+  file_name?: string;
+  student_name?: string;
+  student_email?: string;
+  assignment_title?: string;
 }
 
 export interface EvaluationListOut {

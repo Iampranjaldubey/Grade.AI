@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.core.deps import require_professor, require_student
+from app.core.config import Settings, get_settings
 from app.core.enums import ApprovalStatus, SubmissionStatus
 from app.db.session import get_db
 from app.models.assignment import Assignment
@@ -22,6 +23,7 @@ from app.models.course import Course
 from app.models.evaluation import Evaluation
 from app.models.submission import Submission
 from app.models.user import User
+from app.services.s3_service import get_s3_service
 from app.schemas.evaluation import (
     ApproveEvaluationRequest,
     EvaluationListOut,
@@ -141,6 +143,7 @@ async def get_evaluation_detail(
     evaluation_id: uuid.UUID,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> EvaluationOut:
     """
     Get full evaluation details including all criteria scores and retrieved chunks.
@@ -154,7 +157,9 @@ async def get_evaluation_detail(
         .options(
             joinedload(Evaluation.submission)
             .joinedload(Submission.assignment)
-            .joinedload(Assignment.course)
+            .joinedload(Assignment.course),
+            joinedload(Evaluation.submission)
+            .joinedload(Submission.student)
         )
     )
 
@@ -175,7 +180,23 @@ async def get_evaluation_detail(
         professor_id=str(current_user.id),
     )
 
-    return EvaluationOut.model_validate(evaluation)
+    out = EvaluationOut.model_validate(evaluation)
+    if evaluation.submission:
+        s3_service = get_s3_service(settings)
+        try:
+            fresh_url = s3_service.generate_presigned_download_url(evaluation.submission.file_key, expires=3600)
+        except Exception:
+            fresh_url = evaluation.submission.file_url
+            
+        out.file_url = fresh_url
+        out.file_name = evaluation.submission.file_name
+        if evaluation.submission.student:
+            out.student_name = evaluation.submission.student.name
+            out.student_email = evaluation.submission.student.email
+        if evaluation.submission.assignment:
+            out.assignment_title = evaluation.submission.assignment.title
+
+    return out
 
 
 @router.post("/{evaluation_id}/approve", response_model=EvaluationOut)
@@ -607,6 +628,7 @@ async def get_evaluation_by_submission(
     submission_id: uuid.UUID,
     current_user: User = Depends(require_professor),
     db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> EvaluationOut:
     """
     Professor views evaluation for a submission.
@@ -614,7 +636,10 @@ async def get_evaluation_by_submission(
     query = (
         select(Evaluation)
         .where(Evaluation.submission_id == submission_id)
-        .options(joinedload(Evaluation.submission).joinedload(Submission.assignment))
+        .options(
+            joinedload(Evaluation.submission).joinedload(Submission.assignment),
+            joinedload(Evaluation.submission).joinedload(Submission.student)
+        )
     )
 
     result = await db.execute(query)
@@ -626,7 +651,23 @@ async def get_evaluation_by_submission(
             detail="Evaluation not found",
         )
 
-    return evaluation
+    out = EvaluationOut.model_validate(evaluation)
+    if evaluation.submission:
+        s3_service = get_s3_service(settings)
+        try:
+            fresh_url = s3_service.generate_presigned_download_url(evaluation.submission.file_key, expires=3600)
+        except Exception:
+            fresh_url = evaluation.submission.file_url
+            
+        out.file_url = fresh_url
+        out.file_name = evaluation.submission.file_name
+        if evaluation.submission.student:
+            out.student_name = evaluation.submission.student.name
+            out.student_email = evaluation.submission.student.email
+        if evaluation.submission.assignment:
+            out.assignment_title = evaluation.submission.assignment.title
+
+    return out
 
 
 @router.get("/submission/{submission_id}", response_model=StudentEvaluationOut)
