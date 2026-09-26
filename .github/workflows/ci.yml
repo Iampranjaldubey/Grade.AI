@@ -51,7 +51,7 @@ jobs:
       - name: Pytest with coverage
         env:
           APP_ENV: test
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           JWT_SECRET: ci-test-secret
         run: |
           pytest \
