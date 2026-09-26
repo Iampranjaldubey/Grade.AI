@@ -62,7 +62,7 @@ describe("RubricBuilder", () => {
   it("enters edit mode and can remove a criterion from the draft", () => {
     renderBuilder([makeRubric("Correctness", "60"), makeRubric("Style", "40")]);
 
-    fireEvent.click(screen.getByRole("button", { name: /edit/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
     // Draft now editable: each row exposes a remove control.
     fireEvent.click(screen.getByRole("button", { name: /remove style/i }));
 
