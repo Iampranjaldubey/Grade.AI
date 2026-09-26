@@ -62,7 +62,7 @@ export function SubmissionsTable({
       const entries = await Promise.all(
         gradedIds.map(async (id) => {
           try {
-            return [id, await evaluationsApi.getMyGrade(id)] as const;
+            return [id, await evaluationsApi.getBySubmission(id)] as const;
           } catch {
             return [id, null] as const;
           }

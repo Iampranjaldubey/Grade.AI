@@ -446,4 +446,9 @@ export const evaluationsApi = {
     const { data } = await apiClient.get<import("@/types").EvaluationOut>(`/evaluations/submission/${submissionId}`);
     return data;
   },
+
+  getBySubmission: async (submissionId: string): Promise<import("@/types").EvaluationOut> => {
+    const { data } = await apiClient.get<import("@/types").EvaluationOut>(`/evaluations/by-submission/${submissionId}`);
+    return data;
+  },
 };

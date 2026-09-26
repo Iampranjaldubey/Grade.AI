@@ -602,6 +602,33 @@ async def trigger_evaluation(
     }
 
 
+@router.get("/by-submission/{submission_id}", response_model=EvaluationOut)
+async def get_evaluation_by_submission(
+    submission_id: uuid.UUID,
+    current_user: User = Depends(require_professor),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationOut:
+    """
+    Professor views evaluation for a submission.
+    """
+    query = (
+        select(Evaluation)
+        .where(Evaluation.submission_id == submission_id)
+        .options(joinedload(Evaluation.submission).joinedload(Submission.assignment))
+    )
+
+    result = await db.execute(query)
+    evaluation = result.scalar_one_or_none()
+
+    if not evaluation:
+        raise HTTPException(
+            status_code=404,
+            detail="Evaluation not found",
+        )
+
+    return evaluation
+
+
 @router.get("/submission/{submission_id}", response_model=StudentEvaluationOut)
 async def get_student_evaluation(
     submission_id: uuid.UUID,
