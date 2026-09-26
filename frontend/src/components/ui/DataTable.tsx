@@ -265,20 +265,13 @@ export function DataTable<T>({
               return (
                 <li key={getRowId(row)}>
                   {onRowClick ? (
-                    <div
-                      role="button"
-                      tabIndex={0}
+                    <button
+                      type="button"
                       onClick={() => onRowClick(row)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          onRowClick(row);
-                        }
-                      }}
-                      className="w-full cursor-pointer block rounded-lg border border-edge bg-surface p-4 text-left shadow-card hover:border-edge-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-safe:transition-colors"
+                      className="w-full rounded-lg border border-edge bg-surface p-4 text-left shadow-card hover:border-edge-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-safe:transition-colors"
                     >
                       {content}
-                    </div>
+                    </button>
                   ) : (
                     <div className="rounded-lg border border-edge bg-surface p-4 shadow-card">
                       {content}

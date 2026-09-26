@@ -182,7 +182,6 @@ export function PendingEvaluationsPage() {
             columns={columns}
             getRowId={(e) => e.id}
             isLoading={isLoading}
-            onRowClick={(e) => navigate(`/professor/evaluations/${e.id}`)}
             searchable={(e) => `${e.student_name} ${e.student_email} ${e.assignment_title}`}
             searchPlaceholder="Search student or assignment…"
             caption="Pending AI evaluations awaiting professor review"

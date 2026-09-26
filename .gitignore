@@ -55,4 +55,4 @@ uploads/
 # Personal scratch notes (deliberately not blanket-ignoring *.txt, which would
 # also swallow legitimate files such as requirements.txt).
 notes.txt
-docs/GENERATION_STATUS.txt
+docs/
