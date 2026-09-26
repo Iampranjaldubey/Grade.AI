@@ -1,4 +1,9 @@
-# GradeAI
+# GradeAI 🎓✨
+
+[![CI](https://github.com/Iampranjaldubey/Grade.AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Iampranjaldubey/Grade.AI/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-18-blue?logo=react)](https://reactjs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 AI-assisted grading for university courses. Professors define rubrics; GradeAI drafts a score
 and per-criterion feedback from the submission and course material. **Nothing reaches a student
@@ -104,19 +109,6 @@ structlog with request-ID correlation.
 
 **Frontend** — React 18 + TypeScript, Vite, React Router v7, TanStack Query, Zustand,
 React Hook Form + Zod, Tailwind CSS, Radix primitives for accessible dialogs/menus/tabs.
-
-Documentation lives in [`docs/`](docs/):
-
-| Document | Contents |
-| --- | --- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and boundaries |
-| [RAG_ARCHITECTURE.md](docs/RAG_ARCHITECTURE.md) | Document lifecycle, chunking, retrieval, evaluation |
-| [API.md](docs/API.md) | Endpoint reference |
-| [DATABASE.md](docs/DATABASE.md) | Schema and relationships |
-| [PROJECT_FLOW.md](docs/PROJECT_FLOW.md) | End-to-end user flows |
-| [CODEBASE_GUIDE.md](docs/CODEBASE_GUIDE.md) | Where things live |
-| [DOCUMENT_MANAGEMENT_ARCHITECTURE.md](docs/DOCUMENT_MANAGEMENT_ARCHITECTURE.md) | Upload and processing |
-| [.github/SECRETS.md](.github/SECRETS.md) | Deployment secrets and variables |
 
 Interactive API docs are served at `/docs` in non-production environments.
 
