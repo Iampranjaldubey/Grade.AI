@@ -1,0 +1,36 @@
+# Single-domain edge proxy with automatic HTTPS (Let's Encrypt).
+#
+#   https://$DOMAIN/api/*                 -> FastAPI backend
+#   https://$DOMAIN/$AWS_S3_BUCKET/*      -> MinIO (presigned upload/download URLs)
+#   https://$DOMAIN/*                     -> React SPA
+#
+# Storage is served on the same origin as the app, so browser uploads need no
+# CORS. Caddy forwards the original Host header, which MinIO needs to verify the
+# presigned URL signature (it was signed for https://$DOMAIN).
+
+{$DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	handle /{$AWS_S3_BUCKET}/* {
+		request_body {
+			max_size 30MB
+		}
+		reverse_proxy minio:9000
+	}
+
+	handle /api/* {
+		encode zstd gzip
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy frontend:80
+	}
+}

@@ -179,13 +179,12 @@ def auth(token: str) -> dict[str, str]:
 
 
 def register(email: str, name: str, role: str) -> str:
-    data = expect(
-        client.post(
-            "/auth/register",
-            json={"email": email, "password": PASSWORD, "name": name, "role": role},
-        ),
-        201,
-    )
+    payload = {"email": email, "password": PASSWORD, "name": name, "role": role}
+    code = get_settings().professor_registration_code
+    if role != "student" and code:
+        # Production refuses privileged sign-ups without the registration code.
+        payload["registration_code"] = code
+    data = expect(client.post("/auth/register", json=payload), 201)
     return data["access_token"]
 
 

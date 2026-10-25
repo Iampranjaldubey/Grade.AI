@@ -17,6 +17,10 @@
 **/.ruff_cache/
 **/*.egg-info/
 backend/.env
+.env
+.env.*
+!.env.example
+backups/
 backend/coverage.xml
 backend/htmlcov/
 backend/.coverage

@@ -1,0 +1,174 @@
+# Production stack for a single server (e.g. an Oracle Cloud Always Free VM).
+#
+# Only Caddy is published (80/443). Postgres, Redis, MinIO and ChromaDB are
+# reachable only on the internal Docker network. Caddy obtains a Let's Encrypt
+# certificate for $DOMAIN automatically.
+#
+# Always run through scripts/prod.sh, which passes --env-file .env.prod:
+#   ./scripts/prod.sh up
+#
+# The project name differs from the dev stack so the two never share volumes.
+name: gradeai-prod
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  env_file: .env.prod
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  minio:
+    image: elestio/minio:latest
+    restart: unless-stopped
+    logging: *logging
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || curl -fs http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: gradeai-backend:prod
+    restart: "no"
+    command: alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: gradeai-backend:prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  celery-worker:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/celery.Dockerfile
+    image: gradeai-celery:prod
+    volumes:
+      # Keep the downloaded embedding model across container restarts.
+      - model_cache:/home/gradeai/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    image: gradeai-frontend:prod
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+      - minio
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  minio_data:
+  model_cache:
+  caddy_data:
+  caddy_config:
