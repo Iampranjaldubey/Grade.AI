@@ -1,88 +1,45 @@
-#!/bin/bash
-# MinIO Setup Script for GradeAI
+#!/usr/bin/env bash
+# Create the GradeAI storage bucket in the local MinIO container.
+#
+# The bucket name must match AWS_S3_BUCKET in backend/.env (default
+# gradeai-uploads). Objects stay private: the app only ever hands out presigned
+# URLs, so no anonymous/public policy is applied.
+set -euo pipefail
 
-# Resolve paths relative to this script so it works from any working directory.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
-echo "🚀 Setting up MinIO for GradeAI..."
-
-# Check if mc (MinIO Client) is installed
-if ! command -v mc &> /dev/null; then
-    echo "❌ MinIO Client (mc) is not installed"
-    echo "Install it from: https://min.io/docs/minio/linux/reference/minio-mc.html"
-    echo ""
-    echo "Windows: choco install minio-client"
-    echo "Mac: brew install minio/stable/mc"
-    echo "Linux: curl https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc"
-    exit 1
+BUCKET="${AWS_S3_BUCKET:-}"
+if [[ -z "$BUCKET" && -f backend/.env ]]; then
+  BUCKET="$(grep -E '^AWS_S3_BUCKET=' backend/.env | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')"
 fi
+BUCKET="${BUCKET:-gradeai-uploads}"
+MINIO_USER="${MINIO_ROOT_USER:-minioadmin}"
+MINIO_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}"
 
-echo "✅ MinIO Client found"
-
-# Configure MinIO alias
-echo "📝 Configuring MinIO alias..."
-mc alias set myminio http://localhost:9000 minioadmin minioadmin
-
-# Check if MinIO is accessible
-if ! mc admin info myminio &> /dev/null; then
-    echo "❌ Cannot connect to MinIO at http://localhost:9000"
-    echo "Make sure MinIO is running: docker-compose up -d minio"
-    exit 1
-fi
-
-echo "✅ Connected to MinIO"
-
-# Create bucket
-echo "📦 Creating bucket 'gradeai-files'..."
-mc mb myminio/gradeai-files --ignore-existing
-
-# Set bucket policy to allow downloads (needed for presigned URLs)
-echo "🔐 Setting bucket policy..."
-mc anonymous set download myminio/gradeai-files
-
-# Apply CORS configuration
-echo "🌐 Applying CORS configuration..."
-if [ -f "minio-cors.json" ]; then
-    mc admin bucket remote add myminio/gradeai-files --service=replica minio-cors.json 2>/dev/null || true
-    # Alternative approach - set policy directly
-    cat > /tmp/minio-policy.json << 'EOF'
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {"AWS": ["*"]},
-            "Action": ["s3:GetObject"],
-            "Resource": ["arn:aws:s3:::gradeai-files/*"]
-        }
-    ]
-}
-EOF
-    mc anonymous set-json /tmp/minio-policy.json myminio/gradeai-files
-    rm /tmp/minio-policy.json
-    echo "✅ Bucket policy applied"
-    echo "⚠️  Note: CORS must be configured via MinIO Console at http://localhost:9001"
+# Prefer a host-installed mc; otherwise use the one shipped in the MinIO image,
+# so no extra install is needed.
+if command -v mc >/dev/null 2>&1; then
+  ENDPOINT="http://localhost:9000"
+  run_mc() { mc "$@"; }
 else
-    echo "❌ minio-cors.json not found"
+  if ! docker compose ps --status running minio 2>/dev/null | grep -q minio; then
+    echo "MinIO is not running. Start it with: docker compose up -d minio" >&2
+    exit 1
+  fi
+  ENDPOINT="http://localhost:9000"  # resolved inside the MinIO container
+  run_mc() { docker compose exec -T minio mc "$@"; }
 fi
 
-# Verify setup
-echo ""
-echo "🔍 Verifying setup..."
-mc ls myminio/
+echo "Configuring MinIO at ${ENDPOINT}..."
+run_mc alias set gradeai "$ENDPOINT" "$MINIO_USER" "$MINIO_PASSWORD" >/dev/null
 
-echo ""
-echo "✅ MinIO setup complete!"
-echo ""
-echo "📋 Next steps:"
-echo "1. Open MinIO Console: http://localhost:9001"
-echo "2. Login with: minioadmin / minioadmin"
-echo "3. Navigate to: Buckets → gradeai-files → Settings"
-echo "4. Add CORS rules from minio-cors.json"
-echo ""
-echo "5. Test your setup:"
-echo "   - Start backend: docker-compose up backend"
-echo "   - Start frontend: cd frontend && npm run dev"
-echo "   - Try uploading a file"
-echo ""
+echo "Creating bucket '${BUCKET}'..."
+run_mc mb --ignore-existing "gradeai/${BUCKET}"
+
+# Undo the public-read policy older versions of this script applied.
+run_mc anonymous set none "gradeai/${BUCKET}" >/dev/null
+
+echo "Buckets:"
+run_mc ls gradeai/
+echo "MinIO setup complete."

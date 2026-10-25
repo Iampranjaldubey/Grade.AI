@@ -56,7 +56,15 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-2.0-flash", alias="GEMINI_MODEL")
+    # Pinned rather than a "-latest" alias so grades stay reproducible: an alias
+    # can silently move to a new model and shift scores.
+    gemini_model: str = Field(default="gemini-3.6-flash", alias="GEMINI_MODEL")
+    # Tried when the primary model is overloaded or unavailable. Set empty to
+    # disable. A different model family has separate capacity, so it usually
+    # still answers when the primary returns 503/504 under load.
+    gemini_fallback_model: str = Field(
+        default="gemini-3.5-flash-lite", alias="GEMINI_FALLBACK_MODEL"
+    )
 
     # Hard ceiling on a single Gemini call. Without this the SDK can block
     # indefinitely, and because Celery runs with acks_late a hung call occupies
