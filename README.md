@@ -164,6 +164,12 @@ Gemini key and takes a minute or two.
 
 Other targets: `make up`, `make down`, `make logs`, `make test`, `make lint`.
 
+### Production
+
+[`deploy/ORACLE.md`](deploy/ORACLE.md) covers deploying to a single server (an Oracle Cloud
+Always Free VM) with `docker-compose.prod.yml`. Caddy handles HTTPS, secrets are generated
+for you, and only ports 80 and 443 are exposed.
+
 ---
 
 ## Tech stack
