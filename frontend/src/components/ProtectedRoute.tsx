@@ -10,7 +10,15 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, user, initializeAuth } = useAuthStore();
+  const { isAuthenticated, isLoading, user, accessToken, initializeAuth } = useAuthStore();
+
+  // After a full page load only the tokens are rehydrated from storage; the user
+  // is fetched by initializeAuth in an effect, which runs *after* this first
+  // render. Treat "token present, user not loaded yet" as still loading.
+  // Otherwise the first render redirects to /login, the login page sees the
+  // session once it resolves and sends the user to their dashboard, and every
+  // refresh or shared link loses the page it was on.
+  const restoringSession = !isAuthenticated && !user && Boolean(accessToken);
 
   useEffect(() => {
     if (!user && !isLoading) {
@@ -18,7 +26,7 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
     }
   }, [user, isLoading, initializeAuth]);
 
-  if (isLoading) {
+  if (isLoading || restoringSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-muted">
         <Spinner className="h-8 w-8 text-brand" label="Checking your session" />

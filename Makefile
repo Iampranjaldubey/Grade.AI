@@ -1,4 +1,4 @@
-.PHONY: dev build test migrate seed lint install-hooks clean
+.PHONY: dev build test migrate seed seed-demo lint install-hooks clean up down logs
 
 COMPOSE := docker compose
 BACKEND_DIR := backend
@@ -18,6 +18,10 @@ migrate:
 
 seed:
 	@bash scripts/seed.sh
+
+# Demo course, accounts and AI-graded submissions (needs the stack running and GEMINI_API_KEY).
+seed-demo:
+	docker compose exec backend python scripts/seed_demo.py
 
 lint:
 	cd $(BACKEND_DIR) && ruff check app tests && black --check app tests
