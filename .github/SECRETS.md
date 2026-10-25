@@ -30,6 +30,7 @@ Configure these in **Settings → Secrets and variables → Actions**.
 
 | Variable | Description |
 |----------|-------------|
+| `STAGING_DEPLOY_ENABLED` | Set to `true` to run the AWS steps of **Deploy Staging**. Unset, pushes to `main` run CI only. |
 | `STAGING_URL` | Public staging base URL (e.g. `https://staging.gradeai.example.com`) |
 | `PRODUCTION_URL` | Public production base URL |
 | `STAGING_API_BASE_URL` | Vite API path for staging frontend build (default `/api/v1`) |

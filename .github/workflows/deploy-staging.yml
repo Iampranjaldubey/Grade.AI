@@ -26,6 +26,12 @@ jobs:
     name: Build and push to ECR
     runs-on: ubuntu-latest
     needs: ci
+    # The AWS resources this deploys to are not provisioned by this repo (see
+    # .github/SECRETS.md). Without this gate every push to main failed at
+    # "Configure AWS credentials". Set the repository variable
+    # STAGING_DEPLOY_ENABLED=true once the secrets exist. Downstream jobs need
+    # this one, so they are skipped too; CI above always runs.
+    if: vars.STAGING_DEPLOY_ENABLED == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -177,7 +183,7 @@ jobs:
     name: Slack notification
     runs-on: ubuntu-latest
     needs: [ci, build-and-push, migrate, deploy, smoke-test]
-    if: always()
+    if: always() && vars.STAGING_DEPLOY_ENABLED == 'true'
     steps:
       - uses: actions/checkout@v4
 
