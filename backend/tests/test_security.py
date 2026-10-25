@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
 from fastapi import HTTPException
 
@@ -44,6 +45,53 @@ def test_refresh_token_roundtrip() -> None:
 def test_decode_token_rejects_garbage() -> None:
     with pytest.raises(HTTPException) as exc_info:
         decode_token("not-a-valid-token")
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_token_rejects_expired_token() -> None:
+    settings = get_settings()
+    expired = jwt.encode(
+        {
+            "sub": str(uuid.uuid4()),
+            "type": "access",
+            "exp": datetime.now(UTC) - timedelta(seconds=1),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        decode_token(expired)
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_token_rejects_wrong_signature() -> None:
+    forged = jwt.encode(
+        {
+            "sub": str(uuid.uuid4()),
+            "type": "access",
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+        },
+        "a-different-secret-that-is-long-enough-for-hs256",
+        algorithm="HS256",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        decode_token(forged)
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_token_rejects_unsigned_none_algorithm() -> None:
+    """The classic 'alg: none' bypass must not be accepted."""
+    unsigned = jwt.encode(
+        {
+            "sub": str(uuid.uuid4()),
+            "type": "access",
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+        },
+        key=None,
+        algorithm="none",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        decode_token(unsigned)
     assert exc_info.value.status_code == 401
 
 

@@ -1,15 +1,23 @@
 """
-AI-powered grading evaluator using Google Gemini API.
+AI-powered grading evaluator using Google Gemini (google-genai SDK).
 Performs RAG-based evaluation with rubrics and course context.
+
+The model is asked for *structured output*: the response is constrained to the
+``GradingResponse`` Pydantic schema, so there is no free-text JSON to scrape.
+The model only judges each criterion; totals and percentages are computed here
+from the rubric, which is the source of truth for criterion names and maxima.
 """
 
-import json
-import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import google.generativeai as genai
+import httpx
 import structlog
+from google import genai
+from google.genai import errors, types
+from pydantic import BaseModel, Field, ValidationError
 
 from app.core.config import Settings
 from app.models.assignment import Assignment
@@ -17,6 +25,55 @@ from app.models.rubric import Rubric
 from app.rag.retrieval import RetrievalResult
 
 logger = structlog.get_logger(__name__)
+
+# Attempts per model before moving on to the fallback model. Kept small: each
+# attempt can take up to GEMINI_REQUEST_TIMEOUT_SECONDS, and the whole task is
+# bounded by the Celery soft time limit.
+ATTEMPTS_PER_MODEL = 2
+RETRY_BACKOFF_SECONDS = 2.0
+
+# HTTP status codes worth retrying: rate limiting and transient server faults
+# (the API returns 503 "high demand" and 504 "deadline exceeded" under load).
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+# The key itself is bad - no other model or attempt will succeed.
+AUTH_STATUS_CODES = {401, 403}
+
+MAX_LISTED_ITEMS = 3  # strengths / weaknesses shown to students
+
+
+class CriterionAssessment(BaseModel):
+    """The model's judgement of a single rubric criterion."""
+
+    criterion_name: str = Field(description="Exact criterion name, copied from the rubric")
+    awarded: float = Field(description="Points awarded, from 0 to the criterion's max points")
+    reasoning: str = Field(
+        description="2-3 specific sentences explaining the score, referencing the submission"
+    )
+
+
+class GradingResponse(BaseModel):
+    """Schema the model's output is constrained to."""
+
+    criteria_scores: list[CriterionAssessment] = Field(
+        description="Exactly one entry per rubric criterion, in rubric order"
+    )
+    strengths: list[str] = Field(description="Up to 3 specific strengths, with examples")
+    weaknesses: list[str] = Field(description="Up to 3 specific weaknesses, with examples")
+    missing_topics: list[str] = Field(
+        description="Topics the rubric requires that the submission does not address"
+    )
+    overall_feedback: str = Field(description="3-4 sentences of constructive summary feedback")
+    confidence_score: float = Field(
+        description="Confidence in this evaluation, from 0.0 (guessing) to 1.0 (certain)"
+    )
+
+
+class InvalidModelOutputError(ValueError):
+    """The model answered, but the answer cannot be turned into a grade."""
+
+
+class FatalModelError(RuntimeError):
+    """An error no retry or fallback model can fix (e.g. an invalid API key)."""
 
 
 @dataclass
@@ -36,6 +93,7 @@ class EvaluationResult:
     is_fallback: bool = (
         False  # True only for the placeholder produced when AI grading fails entirely
     )
+    model_name: str | None = None  # Model that produced the grade (None for the placeholder)
 
 
 class GradingEvaluator:
@@ -44,31 +102,37 @@ class GradingEvaluator:
     Performs structured evaluation based on rubrics and retrieved context.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        client: genai.Client | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         """
-        Initialize evaluator with Gemini API.
-
         Args:
-            settings: Application settings with GEMINI_API_KEY
+            settings: Application settings (Gemini key, models, timeout).
+            client: Optional pre-built client; tests inject a fake here.
+            sleep: Backoff function; tests inject a no-op.
         """
         self.settings = settings
-        self.model_name = settings.gemini_model
-
-        # Configure Gemini API
-        genai.configure(api_key=settings.gemini_api_key)
-
-        # Initialize model with safety settings
-        self.model = genai.GenerativeModel(
-            model_name=self.model_name,
-            generation_config={
-                "temperature": 0.1,  # Low temperature for consistent grading
-                "top_p": 0.95,
-                "top_k": 40,
-                "max_output_tokens": 4096,
-            },
+        self._sleep = sleep
+        self.models = list(
+            dict.fromkeys(m for m in (settings.gemini_model, settings.gemini_fallback_model) if m)
         )
 
-        logger.info("gemini_evaluator_initialized", model=self.model_name)
+        if client is not None:
+            self.client: genai.Client | None = client
+        elif settings.gemini_api_key:
+            self.client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=types.HttpOptions(
+                    timeout=settings.gemini_request_timeout_seconds * 1000  # milliseconds
+                ),
+            )
+        else:
+            self.client = None
+
+        logger.info("gemini_evaluator_initialized", models=self.models, enabled=bool(self.client))
 
     def evaluate(
         self,
@@ -80,14 +144,9 @@ class GradingEvaluator:
         """
         Evaluate a submission using AI with RAG context.
 
-        Args:
-            submission_text: The student's submission text
-            rubrics: List of rubric criteria for the assignment
-            retrieval_result: Retrieved context (rubrics, notes, samples)
-            assignment: Assignment object with metadata
-
-        Returns:
-            EvaluationResult with scores and feedback
+        Tries the primary model, then the fallback model, retrying transient
+        failures. If every attempt fails, returns a flagged placeholder that is
+        never auto-approved.
         """
         logger.info(
             "starting_evaluation",
@@ -95,7 +154,10 @@ class GradingEvaluator:
             rubric_count=len(rubrics),
         )
 
-        # Build prompts
+        if self.client is None:
+            logger.warning("gemini_api_key_missing")
+            return self._create_fallback_evaluation(rubrics, assignment, retrieval_result)
+
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(
             submission_text=submission_text,
@@ -103,69 +165,180 @@ class GradingEvaluator:
             retrieval_result=retrieval_result,
             assignment=assignment,
         )
+        sources = self._source_names(retrieval_result)
 
-        # Call Gemini API
         try:
-            response = self.model.generate_content(
-                [system_prompt, user_prompt],
-                request_options={"timeout": self.settings.gemini_request_timeout_seconds},
-            )
-            response_text = response.text
-
-            logger.info("gemini_response_received", length=len(response_text))
-
-        except Exception as exc:
-            logger.error("gemini_api_call_failed", error=str(exc))
-            # Return fallback evaluation
-            return self._create_fallback_evaluation(rubrics, assignment, retrieval_result)
-
-        # Parse response
-        try:
-            result_dict = self._parse_response(response_text, float(assignment.max_score))
-
-            # Validate criteria count matches
-            if len(result_dict["criteria_scores"]) != len(rubrics):
-                logger.warning(
-                    "criteria_count_mismatch",
-                    expected=len(rubrics),
-                    received=len(result_dict["criteria_scores"]),
+            for model in self.models:
+                result = self._evaluate_with_model(
+                    model, system_prompt, user_prompt, rubrics, assignment, sources
                 )
+                if result is not None:
+                    return result
+        except FatalModelError as exc:
+            logger.error("gemini_fatal_error", error=str(exc))
+        except Exception:
+            # Preserve the contract that evaluate() never raises: an unexpected
+            # SDK error must still produce the flagged placeholder for a human.
+            logger.exception("gemini_unexpected_error")
 
-            # Extract source names
-            sources = list(
+        return self._create_fallback_evaluation(rubrics, assignment, retrieval_result)
+
+    def _evaluate_with_model(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        rubrics: list[Rubric],
+        assignment: Assignment,
+        sources: list[str],
+    ) -> EvaluationResult | None:
+        """Run up to ATTEMPTS_PER_MODEL attempts on one model; None means give up on it."""
+        for attempt in range(1, ATTEMPTS_PER_MODEL + 1):
+            log = logger.bind(model=model, attempt=attempt)
+            try:
+                response = self._generate(model, system_prompt, user_prompt)
+                result = self._build_result(response, rubrics, assignment, sources, model)
+                log.info(
+                    "gemini_evaluation_succeeded",
+                    total_score=result.total_score,
+                    confidence=result.confidence_score,
+                )
+                return result
+            except errors.APIError as exc:
+                if exc.code in AUTH_STATUS_CODES:
+                    raise FatalModelError(f"Gemini rejected the API key ({exc.code})") from exc
+                if exc.code not in RETRYABLE_STATUS_CODES:
+                    # e.g. 404 model retired, 400 bad request: retrying won't help.
+                    log.error("gemini_model_unusable", code=exc.code, error=str(exc)[:300])
+                    return None
+                log.warning("gemini_transient_error", code=exc.code, error=str(exc)[:300])
+            except httpx.TransportError as exc:  # includes timeouts
+                log.warning("gemini_network_error", error=str(exc)[:300])
+            except InvalidModelOutputError as exc:
+                log.warning("gemini_invalid_output", error=str(exc)[:300])
+
+            if attempt < ATTEMPTS_PER_MODEL:
+                self._sleep(RETRY_BACKOFF_SECONDS * attempt)
+
+        return None
+
+    def _generate(
+        self, model: str, system_prompt: str, user_prompt: str
+    ) -> types.GenerateContentResponse:
+        assert self.client is not None
+        return self.client.models.generate_content(
+            model=model,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.1,  # Low temperature for consistent grading
+                # Generous ceiling: on thinking models, reasoning tokens count
+                # toward it, and a truncated response fails schema validation.
+                max_output_tokens=8192,
+                response_mime_type="application/json",
+                response_schema=GradingResponse,
+            ),
+        )
+
+    def _build_result(
+        self,
+        response: types.GenerateContentResponse,
+        rubrics: list[Rubric],
+        assignment: Assignment,
+        sources: list[str],
+        model: str,
+    ) -> EvaluationResult:
+        """Validate the structured response against the rubric and compute the grade."""
+        parsed = self._parse_structured(response)
+
+        by_name = {c.criterion_name.strip().casefold(): c for c in parsed.criteria_scores}
+        missing = [
+            r.criteria_name for r in rubrics if r.criteria_name.strip().casefold() not in by_name
+        ]
+        if missing:
+            raise InvalidModelOutputError(f"Response omitted rubric criteria: {missing}")
+        if len(by_name) != len(rubrics):
+            logger.warning(
+                "unexpected_criteria_ignored",
+                expected=len(rubrics),
+                received=len(parsed.criteria_scores),
+            )
+
+        criteria_scores: list[dict[str, Any]] = []
+        for rubric in rubrics:
+            assessment = by_name[rubric.criteria_name.strip().casefold()]
+            max_points = float(rubric.max_points)
+            awarded = min(max(assessment.awarded, 0.0), max_points)
+            if awarded != assessment.awarded:
+                logger.warning(
+                    "criterion_score_clamped",
+                    criterion=rubric.criteria_name,
+                    returned=assessment.awarded,
+                    max=max_points,
+                )
+            criteria_scores.append(
                 {
-                    chunk.source_name
-                    for chunks in [
-                        retrieval_result.rubric_chunks,
-                        retrieval_result.notes_chunks,
-                        retrieval_result.sample_chunks,
-                    ]
-                    for chunk in chunks
+                    # Use the rubric's exact name, not the model's echo of it.
+                    "criterion_name": rubric.criteria_name,
+                    "awarded": round(awarded, 2),
+                    "max": max_points,
+                    "reasoning": assessment.reasoning,
                 }
             )
 
-            return EvaluationResult(
-                total_score=result_dict["total_score"],
-                max_score=result_dict["max_score"],
-                percentage=result_dict["percentage"],
-                criteria_scores=result_dict["criteria_scores"],
-                strengths=result_dict["strengths"][:3],  # Max 3
-                weaknesses=result_dict["weaknesses"][:3],  # Max 3
-                missing_topics=result_dict.get("missing_topics", []),
-                overall_feedback=result_dict["overall_feedback"],
-                confidence_score=result_dict.get("confidence_score", 0.7),
-                retrieved_sources=sources,
-            )
+        # Rubric max_points are validated to sum to the assignment max_score, so
+        # the total is derived rather than trusted from the model.
+        max_score = float(assignment.max_score)
+        total_score = round(sum(c["awarded"] for c in criteria_scores), 2)
+        percentage = round(total_score / max_score * 100, 2) if max_score else 0.0
 
-        except Exception as exc:
-            logger.error("evaluation_parse_failed", error=str(exc))
-            # Retry once with more explicit prompt
-            return self._retry_evaluation(
-                submission_text=submission_text,
-                rubrics=rubrics,
-                retrieval_result=retrieval_result,
-                assignment=assignment,
-            )
+        return EvaluationResult(
+            total_score=total_score,
+            max_score=max_score,
+            percentage=percentage,
+            criteria_scores=criteria_scores,
+            strengths=parsed.strengths[:MAX_LISTED_ITEMS],
+            weaknesses=parsed.weaknesses[:MAX_LISTED_ITEMS],
+            missing_topics=parsed.missing_topics,
+            overall_feedback=parsed.overall_feedback,
+            confidence_score=min(max(parsed.confidence_score, 0.0), 1.0),
+            retrieved_sources=sources,
+            model_name=model,
+        )
+
+    @staticmethod
+    def _parse_structured(response: types.GenerateContentResponse) -> GradingResponse:
+        """Return the schema-validated response, or raise InvalidModelOutputError."""
+        if isinstance(response.parsed, GradingResponse):
+            return response.parsed
+
+        # The SDK leaves `parsed` empty when the JSON doesn't validate, most often
+        # because the output was cut off. Validate the raw text ourselves to get a
+        # precise error, and report why generation stopped.
+        finish_reason = None
+        if response.candidates:
+            finish_reason = response.candidates[0].finish_reason
+        try:
+            return GradingResponse.model_validate_json(response.text or "")
+        except ValidationError as exc:
+            raise InvalidModelOutputError(
+                f"Response did not match schema (finish_reason={finish_reason}): "
+                f"{exc.error_count()} error(s)"
+            ) from exc
+
+    @staticmethod
+    def _source_names(retrieval_result: RetrievalResult) -> list[str]:
+        return sorted(
+            {
+                chunk.source_name
+                for chunks in (
+                    retrieval_result.rubric_chunks,
+                    retrieval_result.notes_chunks,
+                    retrieval_result.sample_chunks,
+                )
+                for chunk in chunks
+            }
+        )
 
     def _build_system_prompt(self) -> str:
         """Build system prompt for the evaluator."""
@@ -178,9 +351,7 @@ Guidelines:
 - Never hallucinate facts not present in the provided context
 - Use the course materials and sample solutions as reference standards
 - Be consistent and objective in applying rubric criteria
-- Provide actionable feedback that helps students improve
-
-Your evaluation must be thorough, evidence-based, and formatted exactly as specified."""
+- Provide actionable feedback that helps students improve"""
 
     def _build_user_prompt(
         self,
@@ -237,171 +408,14 @@ Source: {chunk.source_name}
 Evaluate the student answer criterion by criterion based on the rubric above.
 
 For each criterion:
-1. Award points from 0 to the criterion's max_points
+1. Award points from 0 to the criterion's Max Points
 2. Provide specific reasoning that references the student's actual text
 3. Compare against the rubric description and evaluation hints
 
-Return ONLY valid JSON matching this exact schema (no markdown, no code blocks):
-
-{{
-  "total_score": <sum of all awarded points>,
-  "max_score": {assignment.max_score},
-  "percentage": <(total_score / max_score) * 100>,
-  "criteria_scores": [
-    {{
-      "criterion_name": "<exact criterion name from rubric>",
-      "awarded": <points awarded (0 to max)>,
-      "max": <max points for this criterion>,
-      "reasoning": "<2-3 specific sentences explaining the score>"
-    }}
-  ],
-  "strengths": [
-    "<specific strength with example from submission>",
-    "<another strength>"
-  ],
-  "weaknesses": [
-    "<specific weakness with example>",
-    "<another weakness>"
-  ],
-  "missing_topics": [
-    "<topic required by rubric but not addressed>"
-  ],
-  "overall_feedback": "<3-4 sentences of constructive summary feedback>",
-  "confidence_score": <your confidence in this evaluation, 0.0 to 1.0>
-}}
-
-CRITICAL: Return ONLY the JSON object. Do not include markdown code blocks, explanations, or any other text.
+Return exactly one criteria_scores entry per rubric criterion, using the exact criterion name from the rubric.
 """
 
         return prompt
-
-    def _parse_response(self, response_text: str, max_score: float) -> dict[str, Any]:
-        """
-        Parse Gemini response into structured dict.
-
-        Args:
-            response_text: Raw response from Gemini
-            max_score: Maximum possible score for validation
-
-        Returns:
-            Parsed evaluation dict
-
-        Raises:
-            ValueError: If parsing fails or validation fails
-        """
-        # Strip markdown code blocks if present
-        text = response_text.strip()
-
-        # Remove ```json and ``` markers
-        text = re.sub(r"^```json\s*", "", text, flags=re.MULTILINE)
-        text = re.sub(r"^```\s*$", "", text, flags=re.MULTILINE)
-        text = text.strip()
-
-        # Parse JSON
-        try:
-            result = json.loads(text)
-        except json.JSONDecodeError as exc:
-            logger.error("json_parse_failed", error=str(exc), text=text[:500])
-            raise ValueError(f"Failed to parse JSON response: {exc}") from exc
-
-        # Validate required fields
-        required_fields = [
-            "total_score",
-            "max_score",
-            "percentage",
-            "criteria_scores",
-            "strengths",
-            "weaknesses",
-            "overall_feedback",
-        ]
-
-        for field in required_fields:
-            if field not in result:
-                raise ValueError(f"Missing required field: {field}")
-
-        # Validate score constraints
-        if result["total_score"] > max_score:
-            logger.warning(
-                "total_score_exceeds_max",
-                total=result["total_score"],
-                max=max_score,
-            )
-            result["total_score"] = max_score
-            result["percentage"] = 100.0
-
-        # Ensure confidence_score exists
-        if "confidence_score" not in result:
-            result["confidence_score"] = 0.7
-
-        # Ensure missing_topics exists
-        if "missing_topics" not in result:
-            result["missing_topics"] = []
-
-        return result
-
-    def _retry_evaluation(
-        self,
-        submission_text: str,
-        rubrics: list[Rubric],
-        retrieval_result: RetrievalResult,
-        assignment: Assignment,
-    ) -> EvaluationResult:
-        """
-        Retry evaluation with more explicit instructions.
-        If this fails too, return fallback evaluation.
-        """
-        logger.info("retrying_evaluation")
-
-        try:
-            # Simplified prompt for retry
-            simple_prompt = f"""Grade this student submission for the assignment "{assignment.title}".
-
-Max Score: {assignment.max_score}
-
-Rubric:
-{chr(10).join(f"- {r.criteria_name}: {r.max_points} points" for r in rubrics)}
-
-Student Answer:
-{submission_text[:2000]}
-
-Return JSON only:
-{{"total_score": <number>, "max_score": {assignment.max_score}, "percentage": <number>, "criteria_scores": [...], "strengths": [...], "weaknesses": [...], "missing_topics": [], "overall_feedback": "<text>", "confidence_score": 0.5}}
-"""
-
-            response = self.model.generate_content(
-                simple_prompt,
-                request_options={"timeout": self.settings.gemini_request_timeout_seconds},
-            )
-            result_dict = self._parse_response(response.text, float(assignment.max_score))
-
-            sources = list(
-                {
-                    chunk.source_name
-                    for chunks in [
-                        retrieval_result.rubric_chunks,
-                        retrieval_result.notes_chunks,
-                        retrieval_result.sample_chunks,
-                    ]
-                    for chunk in chunks
-                }
-            )
-
-            return EvaluationResult(
-                total_score=result_dict["total_score"],
-                max_score=result_dict["max_score"],
-                percentage=result_dict["percentage"],
-                criteria_scores=result_dict["criteria_scores"],
-                strengths=result_dict["strengths"][:3],
-                weaknesses=result_dict["weaknesses"][:3],
-                missing_topics=result_dict.get("missing_topics", []),
-                overall_feedback=result_dict["overall_feedback"],
-                confidence_score=0.5,  # Lower confidence for retry
-                retrieved_sources=sources,
-            )
-
-        except Exception as exc:
-            logger.error("retry_evaluation_failed", error=str(exc))
-            return self._create_fallback_evaluation(rubrics, assignment, retrieval_result)
 
     def _create_fallback_evaluation(
         self,
@@ -433,18 +447,6 @@ Return JSON only:
         max_score_float = float(assignment.max_score)
         total_score = max_score_float * 0.5
 
-        sources = list(
-            {
-                chunk.source_name
-                for chunks in [
-                    retrieval_result.rubric_chunks,
-                    retrieval_result.notes_chunks,
-                    retrieval_result.sample_chunks,
-                ]
-                for chunk in chunks
-            }
-        )
-
         return EvaluationResult(
             total_score=total_score,
             max_score=max_score_float,
@@ -455,6 +457,6 @@ Return JSON only:
             missing_topics=[],
             overall_feedback="Automatic evaluation encountered an error. This submission requires manual grading by the professor.",
             confidence_score=0.0,
-            retrieved_sources=sources,
+            retrieved_sources=self._source_names(retrieval_result),
             is_fallback=True,
         )

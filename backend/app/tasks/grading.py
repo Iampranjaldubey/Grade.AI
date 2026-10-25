@@ -258,6 +258,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
                     "percentage": evaluation_result.percentage,
                     "confidence_score": evaluation_result.confidence_score,
                     "is_fallback": evaluation_result.is_fallback,
+                    "model": evaluation_result.model_name,
                 }
                 existing_eval.strengths = evaluation_result.strengths
                 existing_eval.weaknesses = evaluation_result.weaknesses
@@ -320,6 +321,7 @@ def evaluate_submission(self, submission_id: str) -> dict:
                         "percentage": evaluation_result.percentage,
                         "confidence_score": evaluation_result.confidence_score,
                         "is_fallback": evaluation_result.is_fallback,
+                        "model": evaluation_result.model_name,
                     },
                     strengths=evaluation_result.strengths,
                     weaknesses=evaluation_result.weaknesses,

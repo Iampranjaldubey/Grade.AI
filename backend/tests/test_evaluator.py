@@ -1,24 +1,36 @@
 """
-Tests for app.rag.evaluator.GradingEvaluator: prompt building, response
-parsing, fallback evaluation, and the evaluate()/retry control flow.
+Tests for app.rag.evaluator.GradingEvaluator: prompt building, structured
+response validation, server-side scoring, retry / fallback-model control flow,
+and the flagged placeholder.
 
-The Gemini SDK itself (genai.configure / GenerativeModel) is monkeypatched so
-these tests exercise our parsing and control-flow logic without any network
-call, matching the pattern used by test_fallback_grading.py.
+A fake google-genai client is injected, so no network call is ever made.
 """
 
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from google.genai import errors
 
 from app.core.config import Settings
 from app.core.enums import GradingMode
-from app.rag.evaluator import EvaluationResult, GradingEvaluator
+from app.rag.evaluator import (
+    ATTEMPTS_PER_MODEL,
+    CriterionAssessment,
+    EvaluationResult,
+    GradingEvaluator,
+    GradingResponse,
+)
 from app.rag.retrieval import RetrievalResult, RetrievedChunk
+
+PRIMARY = "primary-model"
+FALLBACK = "fallback-model"
 
 
 @dataclass
@@ -40,19 +52,64 @@ class FakeRubric:
     evaluation_hints: str | None = None
 
 
-@pytest.fixture(autouse=True)
-def patch_genai(monkeypatch):
-    """Prevent real Gemini SDK calls; GradingEvaluator.__init__ configures it."""
-    monkeypatch.setattr("app.rag.evaluator.genai.configure", MagicMock())
-    monkeypatch.setattr(
-        "app.rag.evaluator.genai.GenerativeModel", MagicMock(return_value=MagicMock())
+def two_rubrics() -> list[FakeRubric]:
+    return [
+        FakeRubric(criteria_name="Content", max_points=Decimal("60"), weight=Decimal("60")),
+        FakeRubric(criteria_name="Clarity", max_points=Decimal("40"), weight=Decimal("40")),
+    ]
+
+
+def grading_response(**overrides: Any) -> GradingResponse:
+    data: dict[str, Any] = {
+        "criteria_scores": [
+            CriterionAssessment(criterion_name="Content", awarded=50, reasoning="Solid argument."),
+            CriterionAssessment(criterion_name="Clarity", awarded=30, reasoning="Mostly clear."),
+        ],
+        "strengths": ["Clear thesis", "Good examples", "Strong conclusion", "Extra one"],
+        "weaknesses": ["Minor grammar issues"],
+        "missing_topics": [],
+        "overall_feedback": "Well done overall.",
+        "confidence_score": 0.9,
+    }
+    data.update(overrides)
+    return GradingResponse(**data)
+
+
+def ok(parsed: GradingResponse) -> SimpleNamespace:
+    """A successful SDK response whose JSON validated against the schema."""
+    return SimpleNamespace(parsed=parsed, text=parsed.model_dump_json(), candidates=[])
+
+
+def unparsable(text: str = "not json", finish_reason: str = "MAX_TOKENS") -> SimpleNamespace:
+    return SimpleNamespace(
+        parsed=None, text=text, candidates=[SimpleNamespace(finish_reason=finish_reason)]
     )
 
 
+def server_error(code: int = 503) -> errors.ServerError:
+    return errors.ServerError(code, {"error": {"code": code, "message": "high demand"}})
+
+
+def client_error(code: int) -> errors.ClientError:
+    return errors.ClientError(code, {"error": {"code": code, "message": "nope"}})
+
+
 @pytest.fixture
-def evaluator() -> GradingEvaluator:
-    settings = Settings(GEMINI_API_KEY="test-key", GEMINI_MODEL="gemini-2.0-flash")
-    return GradingEvaluator(settings)
+def client() -> MagicMock:
+    return MagicMock()
+
+
+@pytest.fixture
+def sleeps() -> list[float]:
+    return []
+
+
+@pytest.fixture
+def evaluator(client: MagicMock, sleeps: list[float]) -> GradingEvaluator:
+    settings = Settings(
+        GEMINI_API_KEY="test-key", GEMINI_MODEL=PRIMARY, GEMINI_FALLBACK_MODEL=FALLBACK
+    )
+    return GradingEvaluator(settings, client=client, sleep=sleeps.append)
 
 
 @pytest.fixture
@@ -62,52 +119,234 @@ def empty_retrieval() -> RetrievalResult:
     )
 
 
-VALID_RESPONSE_JSON = """{
-  "total_score": 85,
-  "max_score": 100,
-  "percentage": 85.0,
-  "criteria_scores": [
-    {"criterion_name": "Content", "awarded": 85, "max": 100, "reasoning": "Solid work."}
-  ],
-  "strengths": ["Clear thesis", "Good examples", "Strong conclusion", "Extra one"],
-  "weaknesses": ["Minor grammar issues", "Could cite more sources", "Extra weakness"],
-  "overall_feedback": "Well done overall.",
-  "confidence_score": 0.9
-}"""
+def run(evaluator: GradingEvaluator, retrieval: RetrievalResult, rubrics=None) -> EvaluationResult:
+    return evaluator.evaluate(
+        submission_text="My essay text.",
+        rubrics=rubrics if rubrics is not None else two_rubrics(),
+        retrieval_result=retrieval,
+        assignment=FakeAssignment(),
+    )
 
 
-class TestParseResponse:
-    def test_parses_valid_json(self, evaluator: GradingEvaluator) -> None:
-        result = evaluator._parse_response(VALID_RESPONSE_JSON, max_score=100.0)
-        assert result["total_score"] == 85
-        assert result["overall_feedback"] == "Well done overall."
-        assert result["missing_topics"] == []  # defaulted
-        assert result["confidence_score"] == 0.9
+def models_called(client: MagicMock) -> list[str]:
+    return [c.kwargs["model"] for c in client.models.generate_content.call_args_list]
 
-    def test_strips_markdown_code_fences(self, evaluator: GradingEvaluator) -> None:
-        wrapped = f"```json\n{VALID_RESPONSE_JSON}\n```"
-        result = evaluator._parse_response(wrapped, max_score=100.0)
-        assert result["total_score"] == 85
 
-    def test_defaults_confidence_score_when_missing(self, evaluator: GradingEvaluator) -> None:
-        text = VALID_RESPONSE_JSON.replace('"confidence_score": 0.9', '"confidence_score_x": 0.9')
-        result = evaluator._parse_response(text, max_score=100.0)
-        assert result["confidence_score"] == 0.7
+class TestConfiguration:
+    def test_without_api_key_returns_placeholder_without_calling_api(
+        self, empty_retrieval: RetrievalResult
+    ) -> None:
+        evaluator = GradingEvaluator(Settings(GEMINI_API_KEY=""))
+        assert evaluator.client is None
+        result = run(evaluator, empty_retrieval)
+        assert result.is_fallback is True
 
-    def test_clamps_total_score_exceeding_max(self, evaluator: GradingEvaluator) -> None:
-        text = VALID_RESPONSE_JSON.replace('"total_score": 85', '"total_score": 150')
-        result = evaluator._parse_response(text, max_score=100.0)
-        assert result["total_score"] == 100.0
-        assert result["percentage"] == 100.0
+    def test_duplicate_or_blank_fallback_model_is_not_tried_twice(self, client) -> None:
+        same = GradingEvaluator(
+            Settings(GEMINI_API_KEY="k", GEMINI_MODEL=PRIMARY, GEMINI_FALLBACK_MODEL=PRIMARY),
+            client=client,
+        )
+        blank = GradingEvaluator(
+            Settings(GEMINI_API_KEY="k", GEMINI_MODEL=PRIMARY, GEMINI_FALLBACK_MODEL=""),
+            client=client,
+        )
+        assert same.models == [PRIMARY]
+        assert blank.models == [PRIMARY]
 
-    def test_invalid_json_raises_value_error(self, evaluator: GradingEvaluator) -> None:
-        with pytest.raises(ValueError, match="Failed to parse JSON response"):
-            evaluator._parse_response("not json at all {{{", max_score=100.0)
+    def test_request_uses_structured_output(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.return_value = ok(grading_response())
+        run(evaluator, empty_retrieval)
 
-    def test_missing_required_field_raises_value_error(self, evaluator: GradingEvaluator) -> None:
-        text = '{"total_score": 1, "max_score": 100, "percentage": 1.0}'
-        with pytest.raises(ValueError, match="Missing required field"):
-            evaluator._parse_response(text, max_score=100.0)
+        config = client.models.generate_content.call_args.kwargs["config"]
+        assert config.response_mime_type == "application/json"
+        assert config.response_schema is GradingResponse
+        assert "expert academic evaluator" in config.system_instruction
+
+
+class TestScoring:
+    def test_valid_response_is_scored_from_the_rubric(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.return_value = ok(grading_response())
+        result = run(evaluator, empty_retrieval)
+
+        assert result.is_fallback is False
+        assert result.model_name == PRIMARY
+        assert result.total_score == 80.0  # 50 + 30, computed here, not trusted from the model
+        assert result.max_score == 100.0
+        assert result.percentage == 80.0
+        assert [c["max"] for c in result.criteria_scores] == [60.0, 40.0]
+        assert result.confidence_score == 0.9
+        assert len(result.strengths) == 3  # capped at 3
+
+    def test_awarded_points_are_clamped_to_criterion_range(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        parsed = grading_response(
+            criteria_scores=[
+                CriterionAssessment(criterion_name="Content", awarded=75, reasoning="r"),
+                CriterionAssessment(criterion_name="Clarity", awarded=-5, reasoning="r"),
+            ],
+            confidence_score=1.7,
+        )
+        client.models.generate_content.return_value = ok(parsed)
+        result = run(evaluator, empty_retrieval)
+
+        assert [c["awarded"] for c in result.criteria_scores] == [60.0, 0.0]
+        assert result.total_score == 60.0
+        assert result.confidence_score == 1.0
+
+    def test_criterion_names_match_case_insensitively_and_use_rubric_spelling(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        parsed = grading_response(
+            criteria_scores=[
+                # Out of order, different case, extra whitespace, plus an extra criterion.
+                CriterionAssessment(criterion_name=" clarity ", awarded=20, reasoning="b"),
+                CriterionAssessment(criterion_name="CONTENT", awarded=40, reasoning="a"),
+                CriterionAssessment(criterion_name="Invented", awarded=99, reasoning="x"),
+            ]
+        )
+        client.models.generate_content.return_value = ok(parsed)
+        result = run(evaluator, empty_retrieval)
+
+        assert [c["criterion_name"] for c in result.criteria_scores] == ["Content", "Clarity"]
+        assert [c["reasoning"] for c in result.criteria_scores] == ["a", "b"]
+        assert result.total_score == 60.0  # the invented criterion is ignored
+
+    def test_raw_text_is_validated_when_sdk_did_not_parse(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        response = ok(grading_response())
+        response.parsed = None
+        client.models.generate_content.return_value = response
+        result = run(evaluator, empty_retrieval)
+        assert result.is_fallback is False
+        assert result.total_score == 80.0
+
+    def test_sources_are_collected_from_retrieval(
+        self, evaluator: GradingEvaluator, client: MagicMock
+    ) -> None:
+        chunk = RetrievedChunk("x", "d1", "notes", 0.1, 0, "lecture1.pdf")
+        retrieval = RetrievalResult([], [chunk], [], 1)
+        client.models.generate_content.return_value = ok(grading_response())
+        result = run(evaluator, retrieval)
+        assert result.retrieved_sources == ["lecture1.pdf"]
+
+
+class TestRetryAndFallbackModel:
+    def test_transient_error_is_retried_on_the_same_model(
+        self,
+        evaluator: GradingEvaluator,
+        client: MagicMock,
+        sleeps: list[float],
+        empty_retrieval: RetrievalResult,
+    ) -> None:
+        client.models.generate_content.side_effect = [server_error(503), ok(grading_response())]
+        result = run(evaluator, empty_retrieval)
+
+        assert result.is_fallback is False
+        assert result.model_name == PRIMARY
+        assert models_called(client) == [PRIMARY, PRIMARY]
+        assert len(sleeps) == 1
+
+    def test_overloaded_primary_falls_back_to_secondary_model(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = [server_error(504)] * ATTEMPTS_PER_MODEL + [
+            ok(grading_response())
+        ]
+        result = run(evaluator, empty_retrieval)
+
+        assert result.is_fallback is False
+        assert result.model_name == FALLBACK
+        assert models_called(client) == [PRIMARY] * ATTEMPTS_PER_MODEL + [FALLBACK]
+
+    def test_retired_model_skips_straight_to_fallback_without_retrying(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = [client_error(404), ok(grading_response())]
+        result = run(evaluator, empty_retrieval)
+
+        assert result.model_name == FALLBACK
+        assert models_called(client) == [PRIMARY, FALLBACK]
+
+    def test_network_timeout_is_retried(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = [
+            httpx.ReadTimeout("timed out"),
+            ok(grading_response()),
+        ]
+        result = run(evaluator, empty_retrieval)
+        assert result.is_fallback is False
+        assert models_called(client) == [PRIMARY, PRIMARY]
+
+    def test_truncated_or_invalid_output_is_retried(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = [unparsable(), ok(grading_response())]
+        result = run(evaluator, empty_retrieval)
+        assert result.is_fallback is False
+        assert models_called(client) == [PRIMARY, PRIMARY]
+
+    def test_response_missing_a_rubric_criterion_is_retried(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        incomplete = grading_response(
+            criteria_scores=[
+                CriterionAssessment(criterion_name="Content", awarded=50, reasoning="r")
+            ]
+        )
+        client.models.generate_content.side_effect = [ok(incomplete), ok(grading_response())]
+        result = run(evaluator, empty_retrieval)
+        assert result.is_fallback is False
+        assert result.total_score == 80.0
+        assert models_called(client) == [PRIMARY, PRIMARY]
+
+
+class TestPlaceholder:
+    def test_every_attempt_failing_yields_flagged_placeholder(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = server_error(503)
+        result = run(evaluator, empty_retrieval)
+
+        assert result.is_fallback is True
+        assert result.model_name is None
+        assert result.confidence_score == 0.0
+        assert len(models_called(client)) == 2 * ATTEMPTS_PER_MODEL
+
+    def test_invalid_api_key_stops_immediately(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = client_error(403)
+        result = run(evaluator, empty_retrieval)
+
+        assert result.is_fallback is True
+        assert models_called(client) == [PRIMARY]  # no retry, no fallback model
+
+    def test_unexpected_exception_never_escapes(
+        self, evaluator: GradingEvaluator, client: MagicMock, empty_retrieval: RetrievalResult
+    ) -> None:
+        client.models.generate_content.side_effect = RuntimeError("SDK bug")
+        result = run(evaluator, empty_retrieval)
+        assert result.is_fallback is True
+
+    def test_placeholder_awards_half_points_per_criterion(
+        self, evaluator: GradingEvaluator, empty_retrieval: RetrievalResult
+    ) -> None:
+        rubric = FakeRubric(max_points=Decimal("40"))
+        result = evaluator._create_fallback_evaluation(
+            [rubric], FakeAssignment(max_score=Decimal("100")), empty_retrieval
+        )
+        assert result.is_fallback is True
+        assert result.confidence_score == 0.0
+        assert result.criteria_scores[0]["awarded"] == 20.0
+        assert result.total_score == 50.0
+        assert result.percentage == 50.0
 
 
 class TestPromptBuilding:
@@ -134,14 +373,7 @@ class TestPromptBuilding:
     def test_user_prompt_includes_notes_and_sample_chunks(
         self, evaluator: GradingEvaluator
     ) -> None:
-        chunk = RetrievedChunk(
-            chunk_text="Relevant note content",
-            document_id="doc-1",
-            doc_type="notes",
-            relevance_score=0.1,
-            chunk_index=0,
-            source_name="notes.pdf",
-        )
+        chunk = RetrievedChunk("Relevant note content", "doc-1", "notes", 0.1, 0, "notes.pdf")
         retrieval = RetrievalResult(
             rubric_chunks=[], notes_chunks=[chunk], sample_chunks=[chunk], total_token_estimate=10
         )
@@ -154,100 +386,3 @@ class TestPromptBuilding:
         assert "Relevant note content" in prompt
         assert "RELEVANT COURSE MATERIAL" in prompt
         assert "SAMPLE SOLUTION EXCERPTS" in prompt
-
-
-class TestCreateFallbackEvaluation:
-    def test_awards_half_points_per_criterion(
-        self, evaluator: GradingEvaluator, empty_retrieval: RetrievalResult
-    ) -> None:
-        rubric = FakeRubric(max_points=Decimal("40"))
-        result = evaluator._create_fallback_evaluation(
-            [rubric], FakeAssignment(max_score=Decimal("100")), empty_retrieval
-        )
-        assert result.is_fallback is True
-        assert result.confidence_score == 0.0
-        assert result.criteria_scores[0]["awarded"] == 20.0
-        assert result.total_score == 50.0
-        assert result.percentage == 50.0
-
-    def test_includes_source_names_from_retrieval(self, evaluator: GradingEvaluator) -> None:
-        chunk = RetrievedChunk(
-            chunk_text="x",
-            document_id="d1",
-            doc_type="notes",
-            relevance_score=0.1,
-            chunk_index=0,
-            source_name="lecture1.pdf",
-        )
-        retrieval = RetrievalResult([], [chunk], [], 1)
-        result = evaluator._create_fallback_evaluation([FakeRubric()], FakeAssignment(), retrieval)
-        assert "lecture1.pdf" in result.retrieved_sources
-
-
-class TestEvaluate:
-    def test_gemini_exception_falls_back(
-        self, evaluator: GradingEvaluator, empty_retrieval: RetrievalResult
-    ) -> None:
-        evaluator.model.generate_content.side_effect = RuntimeError("API down")
-        result = evaluator.evaluate(
-            submission_text="text",
-            rubrics=[FakeRubric()],
-            retrieval_result=empty_retrieval,
-            assignment=FakeAssignment(),
-        )
-        assert result.is_fallback is True
-
-    def test_valid_response_returns_parsed_result(
-        self, evaluator: GradingEvaluator, empty_retrieval: RetrievalResult
-    ) -> None:
-        mock_response = MagicMock()
-        mock_response.text = VALID_RESPONSE_JSON
-        evaluator.model.generate_content.return_value = mock_response
-
-        result = evaluator.evaluate(
-            submission_text="text",
-            rubrics=[FakeRubric()],
-            retrieval_result=empty_retrieval,
-            assignment=FakeAssignment(),
-        )
-        assert isinstance(result, EvaluationResult)
-        assert result.is_fallback is False
-        assert result.total_score == 85
-        # Strengths/weaknesses capped at 3 even though 4/3 were provided.
-        assert len(result.strengths) == 3
-        assert len(result.weaknesses) == 3
-
-    def test_malformed_response_triggers_retry_then_fallback(
-        self, evaluator: GradingEvaluator, empty_retrieval: RetrievalResult
-    ) -> None:
-        bad_response = MagicMock()
-        bad_response.text = "not valid json"
-        # First call (main prompt) and the retry's call both return unparsable text.
-        evaluator.model.generate_content.return_value = bad_response
-
-        result = evaluator.evaluate(
-            submission_text="text",
-            rubrics=[FakeRubric()],
-            retrieval_result=empty_retrieval,
-            assignment=FakeAssignment(),
-        )
-        assert result.is_fallback is True
-
-    def test_malformed_response_then_successful_retry(
-        self, evaluator: GradingEvaluator, empty_retrieval: RetrievalResult
-    ) -> None:
-        bad_response = MagicMock()
-        bad_response.text = "not valid json"
-        good_response = MagicMock()
-        good_response.text = VALID_RESPONSE_JSON
-
-        evaluator.model.generate_content.side_effect = [bad_response, good_response]
-
-        result = evaluator.evaluate(
-            submission_text="text",
-            rubrics=[FakeRubric()],
-            retrieval_result=empty_retrieval,
-            assignment=FakeAssignment(),
-        )
-        assert result.is_fallback is False
-        assert result.confidence_score == 0.5  # retry path always sets 0.5

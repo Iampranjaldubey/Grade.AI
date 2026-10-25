@@ -39,13 +39,13 @@ if %ERRORLEVEL% NEQ 0 (
 echo [OK] Connected to MinIO
 echo.
 
-REM Create bucket
-echo Creating bucket 'gradeai-files'...
-mc mb myminio/gradeai-files --ignore-existing
+REM Create bucket. Must match AWS_S3_BUCKET in backend\.env.
+if "%AWS_S3_BUCKET%"=="" set AWS_S3_BUCKET=gradeai-uploads
+echo Creating bucket '%AWS_S3_BUCKET%'...
+mc mb myminio/%AWS_S3_BUCKET% --ignore-existing
 
-REM Set bucket policy
-echo Setting bucket policy...
-mc anonymous set download myminio/gradeai-files
+REM Keep objects private: the app only serves presigned URLs.
+mc anonymous set none myminio/%AWS_S3_BUCKET%
 
 REM Verify
 echo.
@@ -56,15 +56,5 @@ echo.
 echo ========================================
 echo   Setup Complete!
 echo ========================================
-echo.
-echo IMPORTANT: Configure CORS manually
-echo.
-echo 1. Open MinIO Console: http://localhost:9001
-echo 2. Login: minioadmin / minioadmin
-echo 3. Go to: Buckets -^> gradeai-files -^> Settings
-echo 4. Find "Access Rules" or "CORS Configuration"
-echo 5. Add the CORS rules from minio-cors.json file
-echo.
-echo Then test your upload!
 echo.
 pause
